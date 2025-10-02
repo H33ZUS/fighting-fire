@@ -16,6 +16,7 @@ type FireManager struct {
 	growthInterval time.Duration
 	maxFires       int
 	spreadProb     float64 // probability of fires spreading to neighbour
+	fireCount      int
 }
 
 func NewFireManager(grid *[][]Cell, gridSize int) *FireManager {
@@ -94,6 +95,7 @@ func (fm *FireManager) spawnFire(x, y int) bool {
 
 	(*fm.grid)[x][y].hasFire = true
 	(*fm.grid)[x][y].intensity = 1
+	fm.fireCount++
 	return true
 
 }
@@ -103,13 +105,5 @@ func (fm *FireManager) countActiveFires() int {
 	fm.mu.RLock()
 	defer fm.mu.RUnlock()
 
-	count := 0
-	for i := 0; i < fm.gridSize; i++ {
-		for j := 0; j < fm.gridSize; j++ {
-			if (*fm.grid)[i][j].hasFire {
-				count++
-			}
-		}
-	}
-	return count
+	return fm.fireCount
 }
