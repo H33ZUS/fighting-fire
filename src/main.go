@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"log"
 	"math/rand"
 	"sync"
 	"time"
@@ -20,6 +21,13 @@ var grid [][]Cell
 var gridMutex sync.RWMutex
 
 func main() {
+
+	natsURL := "nats://127.0.0.1:4222"
+	bus, err := NewNatsBus(natsURL)
+	if err != nil {
+		log.Fatalf("FATAL: Failed to connect to NATS server at %s: %v", natsURL, err)
+	}
+	defer bus.Close()
 
 	consoleWriter := uilive.New()
 	consoleWriter.Start()
