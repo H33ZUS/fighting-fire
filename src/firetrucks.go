@@ -6,9 +6,12 @@ import (
 	"time"
 )
 
+var idCounter int = 1
+
 type fireTruck struct {
 	grid           *[][]Cell
 	mu             sync.RWMutex
+	id             int
 	gridsize       int
 	positionX      int
 	positionY      int
@@ -17,8 +20,12 @@ type fireTruck struct {
 }
 
 func CreateFiretruck(grid *[][]Cell, gridsize int, positionX int, positionY int, updateInterval time.Duration) *fireTruck {
+	currentID := idCounter
+	idCounter++
+
 	return &fireTruck{
 		grid:           grid,
+		id:             currentID,
 		gridsize:       gridsize,
 		positionX:      positionX,
 		positionY:      positionY,
