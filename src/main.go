@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"fmt"
+	"math/rand"
+	"sync"
 	"time"
 
 	"github.com/gosuri/uilive"
@@ -15,6 +17,7 @@ type Cell struct {
 }
 
 var grid [][]Cell
+var gridMutex sync.RWMutex
 
 func main() {
 
@@ -40,6 +43,17 @@ func main() {
 
 	fireManager := NewFireManager(&grid, gridSize)
 	fireManager.Start(ctx) // starts spawn goroutine, fire spawns every 5 sec
+
+	for i := 0; i < 10; i++ {
+		x := rand.Intn(20)
+		y := rand.Intn(20)
+		if !grid[x][y].hasTruck {
+			firetrucks := CreateFiretruck(&grid, gridSize, x, y, 1)
+			go firetrucks.initial(ctx)
+		} else {
+			i--
+		}
+	}
 
 	ticker := time.NewTicker(1 * time.Second)
 	defer ticker.Stop()
