@@ -11,7 +11,7 @@ import (
 )
 
 type Cell struct {
-	hasFire   bool
+	HasFire   bool
 	hasTruck  bool
 	intensity int
 }
@@ -73,7 +73,7 @@ func main() {
 			count := 0
 			for i := 0; i < gridSize; i++ {
 				for j := 0; j < gridSize; j++ {
-					if grid[i][j].hasFire {
+					if grid[i][j].HasFire {
 						count++
 					}
 				}
@@ -86,7 +86,7 @@ func main() {
 			for i := 0; i < size; i++ {
 				for j := 0; j < size; j++ {
 					var cell string
-					if grid[i][j].hasFire {
+					if grid[i][j].HasFire {
 						cell = "\033[31m🔥 \033[0m"
 					} else if grid[i][j].hasTruck {
 						cell = "🚒 "

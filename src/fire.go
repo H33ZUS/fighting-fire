@@ -25,8 +25,8 @@ func NewFireManager(grid *[][]Cell, gridSize int) *FireManager {
 		grid:           grid,
 		gridSize:       gridSize,
 		spawnInterval:  5 * time.Second,
-		spreadInterval: 3 * time.Second,
-		growthInterval: 2 * time.Second,
+		spreadInterval: 4 * time.Second,
+		growthInterval: 3 * time.Second,
 		maxFires:       10,
 		spreadProb:     0.3,
 	}
@@ -35,8 +35,8 @@ func NewFireManager(grid *[][]Cell, gridSize int) *FireManager {
 func (fm *FireManager) Start(ctx context.Context) {
 
 	go fm.spawnLoop(ctx) // context used to start and end goroutines
-
-	// more go routines to be added
+	go fm.growthLoop(ctx)
+	go fm.spreadLoop(ctx)
 
 }
 
@@ -55,18 +55,38 @@ func (fm *FireManager) spawnLoop(ctx context.Context) {
 	}
 }
 
-func (fm *FireManager) isValidCoordinate(x, y int) bool {
-	return x >= 0 && x < fm.gridSize && y >= 0 && y < fm.gridSize
+func (fm *FireManager) growthLoop(ctx context.Context) {
+
+	ticker := time.NewTicker(fm.growthInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			fm.growFires()
+		}
+	}
 }
 
-func (fm *FireManager) hasFire(x, y int) bool {
-	fm.mu.RLock()
-	defer fm.mu.RUnlock() // allows multiple goroutines to read at once
+func (fm *FireManager) spreadLoop(ctx context.Context) {
 
-	if !fm.isValidCoordinate(x, y) {
-		return false
+	ticker := time.NewTicker(fm.spreadInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			fm.spreadFires()
+		}
 	}
-	return (*fm.grid)[x][y].hasFire
+}
+
+func (fm *FireManager) isValidCoordinate(x, y int) bool {
+	return x >= 0 && x < fm.gridSize && y >= 0 && y < fm.gridSize
 }
 
 func (fm *FireManager) tryRandomSpawnFire() {
@@ -75,10 +95,26 @@ func (fm *FireManager) tryRandomSpawnFire() {
 		return
 	}
 
-	x := rand.Intn(fm.gridSize)
-	y := rand.Intn(fm.gridSize)
+	for i := 0; i < 10; i++ { // we try spawning for 10 times, otherwise skip for this tick
+		x := rand.Intn(fm.gridSize)
+		y := rand.Intn(fm.gridSize)
 
-	fm.spawnFire(x, y)
+		if !fm.hasAdjacentFire(x, y) && fm.spawnFire(x, y) {
+			return
+		}
+
+	}
+}
+
+func (fm *FireManager) HasFire(x, y int) bool {
+
+	fm.mu.RLock()
+	defer fm.mu.RUnlock()
+
+	if !fm.isValidCoordinate(x, y) {
+		return false
+	}
+	return (*fm.grid)[x][y].HasFire
 }
 
 func (fm *FireManager) spawnFire(x, y int) bool {
@@ -89,11 +125,11 @@ func (fm *FireManager) spawnFire(x, y int) bool {
 		return false
 	}
 
-	if (*fm.grid)[x][y].hasFire {
+	if (*fm.grid)[x][y].HasFire {
 		return false
 	}
 
-	(*fm.grid)[x][y].hasFire = true
+	(*fm.grid)[x][y].HasFire = true
 	(*fm.grid)[x][y].intensity = 1
 	fm.fireCount++
 	return true
@@ -106,4 +142,92 @@ func (fm *FireManager) countActiveFires() int {
 	defer fm.mu.RUnlock()
 
 	return fm.fireCount
+}
+
+func (fm *FireManager) hasAdjacentFire(x, y int) bool {
+
+	fm.mu.RLock()
+	defer fm.mu.RUnlock()
+
+	directions := []struct{ dx, dy int }{
+		{-1, 0}, {1, 0}, {0, -1}, {0, 1}, {-1, -1}, {-1, 1}, {1, -1}, {1, 1},
+	}
+
+	for _, d := range directions {
+		nx, ny := x+d.dx, y+d.dy
+		if fm.isValidCoordinate(nx, ny) && (*fm.grid)[nx][ny].HasFire {
+			return true
+		}
+	}
+	return false
+}
+
+func (fm *FireManager) growFires() {
+
+	fm.mu.Lock()
+	defer fm.mu.Unlock()
+
+	for i := 0; i < fm.gridSize; i++ {
+		for j := 0; j < fm.gridSize; j++ {
+			if (*fm.grid)[i][j].HasFire {
+				(*fm.grid)[i][j].intensity *= 2
+			}
+		}
+	}
+
+}
+
+func (fm *FireManager) spreadFires() {
+
+	fm.mu.Lock()
+	defer fm.mu.Unlock()
+
+	var fireLocations [][2]int
+
+	for i := 0; i < fm.gridSize; i++ {
+		for j := 0; j < fm.gridSize; j++ {
+			if (*fm.grid)[i][j].HasFire {
+				fireLocations = append(fireLocations, [2]int{i, j})
+			}
+		}
+	}
+
+	for _, loc := range fireLocations {
+		fm.spreadFrom(loc[0], loc[1])
+	}
+}
+
+func (fm *FireManager) spreadFrom(x, y int) {
+
+	neighbors := [][2]int{
+		{x - 1, y},
+		{x + 1, y},
+		{x, y - 1},
+		{x, y + 1},
+	}
+
+	for _, n := range neighbors { // spread with probability if neighbor doesn't have a fire
+		nx, ny := n[0], n[1]
+
+		if !fm.isValidCoordinate(nx, ny) {
+			continue
+		}
+
+		if !(*fm.grid)[nx][ny].HasFire && rand.Float64() < fm.spreadProb {
+			(*fm.grid)[nx][ny].HasFire = true
+			(*fm.grid)[nx][ny].intensity = 1
+		}
+	}
+}
+
+func (fm *FireManager) getIntensity(x, y int) int {
+
+	fm.mu.RLock()
+	defer fm.mu.RUnlock()
+
+	if !fm.isValidCoordinate(x, y) || !(*fm.grid)[x][y].HasFire {
+		return 0
+	}
+
+	return (*fm.grid)[x][y].intensity
 }
