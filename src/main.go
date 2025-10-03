@@ -92,7 +92,7 @@ func main() {
 			waterManager.mu.Lock()
 			currentVolume := waterManager.volume
 			waterManager.mu.Unlock()
-			fmt.Printf("Water Supply %d\n ", currentVolume)
+			fmt.Fprintf(consoleWriter, "Water Supply %d\n ", currentVolume)
 
 		}
 	}
