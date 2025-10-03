@@ -46,7 +46,7 @@ func main() {
 	defer cancel()                                          // ensures cancel() is called when main exits
 
 	waterManagerDone := make(chan struct{})             // creates new channel for water supply for refilling
-	waterManager := NewWaterManager()                   // creates new water supply
+	waterManager := NewWaterManager(bus)                // creates new water supply
 	go waterManager.RefillWaterSupply(waterManagerDone) // runs refill routine
 
 	fireManager := NewFireManager(&grid, gridSize)
@@ -56,7 +56,8 @@ func main() {
 		x := rand.Intn(20)
 		y := rand.Intn(20)
 		if !grid[x][y].hasTruck {
-			firetrucks := CreateFiretruck(&grid, gridSize, x, y, 1)
+			firetrucks := CreateFiretruck(bus, &grid, gridSize, x, y, 1)
+			firetrucks.RequestWaterConnection()
 			go firetrucks.initial(ctx)
 		} else {
 			i--
