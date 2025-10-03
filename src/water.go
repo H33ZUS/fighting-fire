@@ -1,6 +1,9 @@
 package main
 
 import (
+	"encoding/json"
+	"fmt"
+	"log"
 	"sync"
 	"time"
 )
@@ -12,16 +15,54 @@ type WaterManager struct {
 	connections     int
 	refillRate      int
 	consumptionRate int
+	bus             MessageBus
 	mu              sync.Mutex
 }
 
-func NewWaterManager() *WaterManager {
+func NewWaterManager(bus MessageBus) *WaterManager {
 
-	return &WaterManager{
+	wm := &WaterManager{
 		volume:          1000,
 		connections:     0,
 		refillRate:      50,
 		consumptionRate: 10,
+		bus:             bus,
+	}
+	wm.SetupNatsSubscriptions()
+	return wm
+}
+
+func (wm *WaterManager) SetupNatsSubscriptions() {
+	if err := wm.bus.Subscribe(SubjectWaterConnect, func(msg []byte) {
+		var req ConnectionRequest
+		if err := json.Unmarshal(msg, &req); err != nil {
+			log.Printf("WM Error unmarshaling connect request: %v", err)
+			return
+		}
+
+		wm.mu.Lock()
+		wm.connections++
+		wm.mu.Unlock()
+		fmt.Printf("💧 Manager processed CONNECT for Truck %d. Active: %d\n", req.TruckID, wm.connections)
+	}); err != nil {
+		log.Fatalf("FATAL: WM failed to subscribe to %s: %v", SubjectWaterConnect, err)
+	}
+
+	if err := wm.bus.Subscribe(SubjectWaterDisconnect, func(msg []byte) {
+		var req ConnectionRequest
+		if err := json.Unmarshal(msg, &req); err != nil {
+			log.Printf("WM Error unmarshaling disconnect request: %v", err)
+			return
+		}
+
+		wm.mu.Lock()
+		if wm.connections > 0 {
+			wm.connections--
+		}
+		wm.mu.Unlock()
+		fmt.Printf("💧 Manager processed DISCONNECT for Truck %d. Active: %d\n", req.TruckID, wm.connections)
+	}); err != nil {
+		log.Fatalf("FATAL: WM failed to subscribe to %s: %v", SubjectWaterDisconnect, err)
 	}
 }
 
@@ -42,9 +83,15 @@ func (wm *WaterManager) RefillWaterSupply(done <-chan struct{}) { // done channe
 				} else {
 					wm.volume = newVolume
 				}
-			} else {
-
 			}
+
+			if wm.connections > 0 {
+				// For now, just print the required consumption,
+				// actual consumption/allocation logic will go here later.
+				required := wm.connections * wm.consumptionRate
+				_ = required
+			}
+
 			wm.mu.Unlock()
 
 		case <-done:

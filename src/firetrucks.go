@@ -2,16 +2,19 @@ package main
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"sync"
 	"time"
 )
 
 var idCounter int = 1
 
-type fireTruck struct {
+type FireTruck struct {
 	grid           *[][]Cell
 	mu             sync.RWMutex
 	id             int
+	bus            MessageBus
 	gridsize       int
 	positionX      int
 	positionY      int
@@ -19,13 +22,14 @@ type fireTruck struct {
 	updateInterval time.Duration
 }
 
-func CreateFiretruck(grid *[][]Cell, gridsize int, positionX int, positionY int, updateInterval time.Duration) *fireTruck {
+func CreateFiretruck(bus MessageBus, grid *[][]Cell, gridsize int, positionX int, positionY int, updateInterval time.Duration) *FireTruck {
 	currentID := idCounter
 	idCounter++
 
-	return &fireTruck{
+	return &FireTruck{
 		grid:           grid,
 		id:             currentID,
+		bus:            bus,
 		gridsize:       gridsize,
 		positionX:      positionX,
 		positionY:      positionY,
@@ -34,7 +38,31 @@ func CreateFiretruck(grid *[][]Cell, gridsize int, positionX int, positionY int,
 	}
 }
 
-func (ft *fireTruck) initial(ctx context.Context) {
+func (ft *FireTruck) RequestWaterConnection() {
+	req := ConnectionRequest{TruckID: ft.id}
+	data, _ := json.Marshal(req)
+
+	// Publish request
+	if err := ft.bus.Publish(SubjectWaterConnect, data); err != nil {
+		fmt.Printf("Truck %d ERROR publishing connect: %v\n", ft.id, err)
+	} else {
+		fmt.Printf("🚒 Truck %d published connection request.\n", ft.id)
+	}
+}
+
+func (ft *FireTruck) DisconnectWaterRequest() {
+	req := ConnectionRequest{TruckID: ft.id}
+	data, _ := json.Marshal(req)
+
+	// Publish request
+	if err := ft.bus.Publish(SubjectWaterDisconnect, data); err != nil {
+		fmt.Printf("Truck %d ERROR publishing disconnect: %v\n", ft.id, err)
+	} else {
+		fmt.Printf("🚒 Truck %d published disconnection request.\n", ft.id)
+	}
+}
+
+func (ft *FireTruck) initial(ctx context.Context) {
 	ticker := time.NewTicker(ft.updateInterval)
 	defer ticker.Stop()
 
@@ -50,7 +78,7 @@ func (ft *fireTruck) initial(ctx context.Context) {
 	}
 }
 
-func (ft *fireTruck) spawn() bool {
+func (ft *FireTruck) spawn() bool {
 	ft.mu.Lock()
 	defer ft.mu.Unlock()
 
@@ -58,13 +86,13 @@ func (ft *fireTruck) spawn() bool {
 	return true
 }
 
-func (ft *fireTruck) clearPos() {
+func (ft *FireTruck) clearPos() {
 	(*ft.grid)[ft.positionX][ft.positionY].hasTruck = false
 }
 
-func (ft *fireTruck) setPos(x int, y int) {
+func (ft *FireTruck) setPos(x int, y int) {
 	(*ft.grid)[x][y].hasTruck = true
 }
 
-func (ft *fireTruck) update() {
+func (ft *FireTruck) update() {
 }
