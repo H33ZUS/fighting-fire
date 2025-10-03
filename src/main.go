@@ -34,6 +34,10 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background()) // creates root context and makes it cancellable
 	defer cancel()                                          // ensures cancel() is called when main exits
 
+	waterManagerDone := make(chan struct{})             // creates new channel for water supply for refilling
+	waterManager := NewWaterManager()                   // creates new water supply
+	go waterManager.RefillWaterSupply(waterManagerDone) // runs refill routine
+
 	fireManager := NewFireManager(&grid, gridSize)
 	fireManager.Start(ctx) // starts spawn goroutine, fire spawns every 5 sec
 
@@ -46,6 +50,7 @@ func main() {
 		select {
 		case <-timeout:
 			fmt.Println("\nSimulation ended")
+			close(waterManagerDone)            // closes water supply channel
 			cancel()                           // stop all goroutines
 			time.Sleep(500 * time.Millisecond) // give time for clean up
 			return
@@ -82,6 +87,12 @@ func main() {
 			fmt.Fprintf(consoleWriter, "\n")
 			fmt.Fprintf(consoleWriter, "%s", state)
 			fmt.Fprintf(consoleWriter, "Active fires %d\n ", count)
+
+			// access current volume of water supply for printing purpose
+			waterManager.mu.Lock()
+			currentVolume := waterManager.volume
+			waterManager.mu.Unlock()
+			fmt.Printf("Water Supply %d\n ", currentVolume)
 
 		}
 	}
