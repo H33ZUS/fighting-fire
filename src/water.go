@@ -18,14 +18,14 @@ type WaterManager struct {
 func NewWaterManager() *WaterManager {
 
 	return &WaterManager{
-		volume:          500,
+		volume:          100,
 		connections:     0,
 		refillRate:      50,
 		consumptionRate: 10,
 	}
 }
 
-func (wm *WaterManager) RefillWaterSupply(done <-chan struct{}) {
+func (wm *WaterManager) RefillWaterSupply(done <-chan struct{}) { // done channel to make sure the routine stops after closing the program
 	ticker := time.NewTicker(1 * time.Second)
 	defer ticker.Stop()
 
