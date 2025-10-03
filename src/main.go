@@ -4,18 +4,21 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"math/rand"
+	"sync"
 	"time"
 
 	"github.com/gosuri/uilive"
 )
 
 type Cell struct {
-	hasFire   bool
+	HasFire   bool
 	hasTruck  bool
 	intensity int
 }
 
 var grid [][]Cell
+var gridMutex sync.RWMutex
 
 func main() {
 
@@ -49,6 +52,17 @@ func main() {
 	fireManager := NewFireManager(&grid, gridSize)
 	fireManager.Start(ctx) // starts spawn goroutine, fire spawns every 5 sec
 
+	for i := 0; i < 10; i++ {
+		x := rand.Intn(20)
+		y := rand.Intn(20)
+		if !grid[x][y].hasTruck {
+			firetrucks := CreateFiretruck(&grid, gridSize, x, y, 1)
+			go firetrucks.initial(ctx)
+		} else {
+			i--
+		}
+	}
+
 	ticker := time.NewTicker(1 * time.Second)
 	defer ticker.Stop()
 
@@ -67,7 +81,7 @@ func main() {
 			count := 0
 			for i := 0; i < gridSize; i++ {
 				for j := 0; j < gridSize; j++ {
-					if grid[i][j].hasFire {
+					if grid[i][j].HasFire {
 						count++
 					}
 				}
@@ -80,7 +94,7 @@ func main() {
 			for i := 0; i < size; i++ {
 				for j := 0; j < size; j++ {
 					var cell string
-					if grid[i][j].hasFire {
+					if grid[i][j].HasFire {
 						cell = "\033[31m🔥 \033[0m"
 					} else if grid[i][j].hasTruck {
 						cell = "🚒 "
