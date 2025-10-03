@@ -55,6 +55,7 @@ func main() {
 				}
 			}
 			fmt.Printf("Active fires %d\n ", count)
+			fmt.Printf("Water Supply %d\n ", waterSupply)
 
 		}
 	}
