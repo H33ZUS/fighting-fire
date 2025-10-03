@@ -18,7 +18,7 @@ type WaterManager struct {
 func NewWaterManager() *WaterManager {
 
 	return &WaterManager{
-		volume:          100,
+		volume:          1000,
 		connections:     0,
 		refillRate:      50,
 		consumptionRate: 10,
