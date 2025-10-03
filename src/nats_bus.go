@@ -7,6 +7,15 @@ import (
 	"github.com/nats-io/nats.go"
 )
 
+/*
+	 ------------------!!!BEFORE RUNNING NATS!!!----------------------
+
+		1. make sure that docker desktop is installed
+		2. if so open a terminal and type in the following command:
+		docker run -d --name nats-server -p 4222:4222 nats:latest
+
+------------------------------------------------------------------
+*/
 type MessageBus interface {
 	Publish(subject string, data []byte) error
 	Subscribe(subject string, handler func(msg []byte)) error

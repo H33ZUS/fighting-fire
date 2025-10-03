@@ -26,34 +26,6 @@ func main() {
 	}
 	defer bus.Close()
 
-	// --- QUICK NATS CONNECTIVITY TEST ---
-	const testSubject = "test.connection.status"
-	received := make(chan string, 1) // Buffered channel to catch the message
-
-	// 1. Subscribe to the subject
-	err = bus.Subscribe(testSubject, func(msg []byte) {
-		log.Println("NATS Test: RECEIVED message!")
-		received <- string(msg) // Send the received data to the channel
-	})
-	if err != nil {
-		log.Fatalf("FATAL: Failed to subscribe for test: %v", err)
-	}
-
-	// 2. Publish a test message
-	testMessage := "NATS is working!"
-	bus.Publish(testSubject, []byte(testMessage))
-	log.Println("NATS Test: Published message.")
-
-	// 3. Wait briefly to see if the subscription handler fires
-	select {
-	case msg := <-received:
-		log.Printf("NATS Test: SUCCESS! Received confirmation: %s", msg)
-	case <-time.After(500 * time.Millisecond):
-		// This timeout means the subscription or publish failed silently.
-		log.Fatal("NATS Test: FAILED! Did not receive published message within timeout.")
-	}
-	// --- END QUICK NATS TEST ---
-
 	consoleWriter := uilive.New()
 	consoleWriter.Start()
 
