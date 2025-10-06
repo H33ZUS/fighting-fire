@@ -56,7 +56,7 @@ func main() {
 		x := rand.Intn(20)
 		y := rand.Intn(20)
 		if !grid[x][y].hasTruck {
-			firetrucks := CreateFiretruck(bus, &grid, gridSize, x, y, 1)
+			firetrucks := CreateFiretruck(bus, &grid, gridSize, x, y, 1, fireManager)
 			go firetrucks.initial(ctx)
 		} else {
 			i--
@@ -112,9 +112,9 @@ func main() {
 
 			// access current volume of water supply for printing purpose
 			waterManager.mu.Lock()
-			currentVolume := waterManager.volume
+			// currentVolume := waterManager.volume
 			waterManager.mu.Unlock()
-			fmt.Fprintf(consoleWriter, "Water Supply %d\n ", currentVolume)
+			//fmt.Fprintf(consoleWriter, "Water Supply %d\n ", currentVolume)
 
 		}
 	}

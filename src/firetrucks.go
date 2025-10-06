@@ -21,11 +21,12 @@ type FireTruck struct {
 	isworking      bool
 	updateInterval time.Duration
 	hasWater       bool
+	fm             *FireManager
 }
 
 const NatsRequestTimeout = 1 * time.Second
 
-func CreateFiretruck(bus MessageBus, grid *[][]Cell, gridsize int, positionX int, positionY int, updateInterval time.Duration) *FireTruck {
+func CreateFiretruck(bus MessageBus, grid *[][]Cell, gridsize int, positionX int, positionY int, updateInterval time.Duration, fm *FireManager) *FireTruck {
 	currentID := idCounter
 	idCounter++
 
@@ -39,17 +40,19 @@ func CreateFiretruck(bus MessageBus, grid *[][]Cell, gridsize int, positionX int
 		isworking:      false,
 		updateInterval: updateInterval * time.Second,
 		hasWater:       false,
+		fm:             fm,
 	}
 }
 
 // TEMPORARY FUNCTION TO CHECK IF FIRE IS NEARBY --- NEEDED FOR FIRE EXTINGUISHING LOGIC
-func (ft *FireTruck) isFireNearby() bool {
+func (ft *FireTruck) isFireNearby() (x, y int) {
 	// Acquire a read lock on the grid before reading its state
 	gridMutex.RLock() // Assuming gridMutex is defined globally in main.go or similar
 	defer gridMutex.RUnlock()
 
 	// Define the 8 surrounding directions (including diagonals)
 	directions := []struct{ dx, dy int }{{0, 1}, {0, -1}, {1, 0}, {-1, 0}, {1, 1}, {1, -1}, {-1, 1}, {-1, -1}}
+	//directions := []struct{ dx, dy int }{{0, 1}, {0, -1}, {1, 0}, {-1, 0}}
 
 	for _, d := range directions {
 		nx, ny := ft.positionX+d.dx, ft.positionY+d.dy
@@ -58,30 +61,11 @@ func (ft *FireTruck) isFireNearby() bool {
 		// We use (*ft.grid) to access the underlying grid slice
 		if nx >= 0 && nx < ft.gridsize && ny >= 0 && ny < ft.gridsize {
 			if (*ft.grid)[nx][ny].HasFire {
-				return true
+				return nx, ny
 			}
 		}
 	}
-	return false
-}
-
-func (ft *FireTruck) SetWorkingStatus(status bool) {
-	ft.mu.Lock()
-	defer ft.mu.Unlock()
-
-	// since working status did not change (still fires nearby) continue extinguishing
-	if ft.isworking == status {
-		return
-	}
-
-	ft.isworking = status // change working status because all fires in range of firetruck are extinguished
-	fmt.Printf("🚒 Truck %d status changed: isworking=%t\n", ft.id, status)
-
-	if status {
-		ft.RequestWaterConnection() // Requests water
-	} else {
-		ft.DisconnectWaterRequest() // Disconnects from water supply
-	}
+	return -2, -1 // hardcoded values so it is out of range
 }
 
 func (ft *FireTruck) RequestWaterConnection() {
@@ -190,16 +174,44 @@ func (ft *FireTruck) setPos(x int, y int) {
 func (ft *FireTruck) update() {
 	ft.mu.RLock()
 	workingStatus := ft.isworking
+	hasWater := ft.hasWater
 	ft.mu.RUnlock()
 
 	// temporarily checks if a fire is nearby
-	fireDetected := ft.isFireNearby()
+	fireX, fireY := ft.isFireNearby()
+	fireDetected := fireX != -2
 
 	if fireDetected && !workingStatus {
-		ft.SetWorkingStatus(true)
+		ft.mu.Lock()
+		ft.isworking = true
+		ft.mu.Unlock()
+
+		workingStatus = true
+
+		if !hasWater {
+			ft.RequestWaterConnection()
+		}
 	}
 
 	if !fireDetected && workingStatus {
-		ft.SetWorkingStatus(false)
+		ft.mu.Lock()
+		ft.isworking = false
+		ft.mu.Unlock()
+
+		workingStatus = false
+
+		if hasWater {
+			ft.DisconnectWaterRequest()
+		}
+	}
+	// fmt.Printf("working status: %t , has Water: %t , fire Detected: %t .\n", workingStatus, hasWater, fireDetected)
+	if workingStatus && fireDetected {
+		if hasWater {
+			ft.fm.ExtinguishFire(fireX, fireY)
+			fmt.Printf("💦 Truck %d extinguishing fire at (%d, %d)\n", ft.id, fireX, fireY)
+		} else {
+			// Working but no water yet (waiting for NATS reply)
+			fmt.Printf("⚠️ Truck %d waiting for water connection to fight fire at (%d, %d)\n", ft.id, fireX, fireY)
+		}
 	}
 }

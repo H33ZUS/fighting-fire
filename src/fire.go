@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"math/rand"
 	"sync"
 	"time"
@@ -19,6 +20,8 @@ type FireManager struct {
 	fireCount      int
 }
 
+const FireExtinguishRate = 3
+
 func NewFireManager(grid *[][]Cell, gridSize int) *FireManager {
 
 	return &FireManager{
@@ -26,7 +29,7 @@ func NewFireManager(grid *[][]Cell, gridSize int) *FireManager {
 		gridSize:       gridSize,
 		spawnInterval:  5 * time.Second,
 		spreadInterval: 4 * time.Second,
-		growthInterval: 3 * time.Second,
+		growthInterval: 6 * time.Second,
 		maxFires:       10,
 		spreadProb:     0.3,
 	}
@@ -230,4 +233,23 @@ func (fm *FireManager) getIntensity(x, y int) int {
 	}
 
 	return (*fm.grid)[x][y].intensity
+}
+
+func (fm *FireManager) ExtinguishFire(x, y int) {
+	fm.mu.Lock()
+	defer fm.mu.Unlock()
+
+	// if there is no fire to extinguish (false function call)
+	if !fm.isValidCoordinate(x, y) || !(*fm.grid)[x][y].HasFire {
+		return
+	}
+
+	(*fm.grid)[x][y].intensity -= FireExtinguishRate
+
+	if (*fm.grid)[x][y].intensity <= 0 {
+		(*fm.grid)[x][y].HasFire = false
+		(*fm.grid)[x][y].intensity = 0
+		fm.fireCount--
+		fmt.Printf("🔥 Fire extinguished at (%d, %d)\n", x, y)
+	}
 }
