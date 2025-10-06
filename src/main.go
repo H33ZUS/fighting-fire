@@ -108,13 +108,17 @@ func main() {
 
 			fmt.Fprintf(consoleWriter, "\n")
 			fmt.Fprintf(consoleWriter, "%s", state)
-			fmt.Fprintf(consoleWriter, "Active fires %d\n ", count)
+			// fmt.Fprintf(consoleWriter, "Active fires %d\n ", count)
+
+			// FOR TESTING PURPOSES
+			// fmt.Printf("\n")
+			// fmt.Printf("%s", state)
 
 			// access current volume of water supply for printing purpose
 			waterManager.mu.Lock()
-			// currentVolume := waterManager.volume
+			currentVolume := waterManager.volume
 			waterManager.mu.Unlock()
-			//fmt.Fprintf(consoleWriter, "Water Supply %d\n ", currentVolume)
+			fmt.Fprintf(consoleWriter, "Water Supply %d\n ", currentVolume)
 
 		}
 	}

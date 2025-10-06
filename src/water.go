@@ -27,7 +27,7 @@ func NewWaterManager(bus MessageBus) *WaterManager {
 		volume:          1000,
 		connections:     0,
 		refillRate:      50,
-		consumptionRate: 10,
+		consumptionRate: 25,
 		bus:             bus,
 	}
 	wm.SetupNatsSubscriptions()
@@ -96,18 +96,20 @@ func (wm *WaterManager) RefillWaterSupply(done <-chan struct{}) { // done channe
 		case <-ticker.C:
 			wm.mu.Lock()
 
+			consumption := wm.connections * wm.consumptionRate
+			wm.volume -= consumption
+
+			if wm.volume < 0 {
+				wm.volume = 0
+			}
+
 			if wm.volume < MaxVolume {
 				newVolume := wm.volume + wm.refillRate
 
 				wm.volume = min(newVolume, MaxVolume)
 			}
 
-			if wm.connections > 0 {
-				// For now, just print the required consumption,
-				// actual consumption/allocation logic will go here later.
-				required := wm.connections * wm.consumptionRate
-				_ = required
-			}
+			// fmt.Printf("💧 Water Supply Update: Volume=%d/%d, Active Connections=%d, Total Consumption=%d\n", wm.volume, MaxVolume, wm.connections, consumption)
 
 			wm.mu.Unlock()
 
