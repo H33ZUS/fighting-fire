@@ -8,3 +8,8 @@ const (
 type ConnectionRequest struct {
 	TruckID int `json:"id"`
 }
+
+type WaterStatusResponse struct {
+	TruckID int  `json:"id"`
+	Status  bool `json:"status"`
+}

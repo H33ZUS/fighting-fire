@@ -20,7 +20,10 @@ type FireTruck struct {
 	positionY      int
 	isworking      bool
 	updateInterval time.Duration
+	hasWater       bool
 }
+
+const NatsRequestTimeout = 1 * time.Second
 
 func CreateFiretruck(bus MessageBus, grid *[][]Cell, gridsize int, positionX int, positionY int, updateInterval time.Duration) *FireTruck {
 	currentID := idCounter
@@ -35,6 +38,7 @@ func CreateFiretruck(bus MessageBus, grid *[][]Cell, gridsize int, positionX int
 		positionY:      positionY,
 		isworking:      false,
 		updateInterval: updateInterval * time.Second,
+		hasWater:       false,
 	}
 }
 
@@ -42,11 +46,35 @@ func (ft *FireTruck) RequestWaterConnection() {
 	req := ConnectionRequest{TruckID: ft.id}
 	data, _ := json.Marshal(req)
 
-	// Publish request
-	if err := ft.bus.Publish(SubjectWaterConnect, data); err != nil {
-		fmt.Printf("Truck %d ERROR publishing connect: %v\n", ft.id, err)
+	fmt.Printf("🚒 Truck %d requesting connection on %s...\n", ft.id, SubjectWaterConnect)
+
+	respMsg, err := ft.bus.Request(SubjectWaterConnect, data, NatsRequestTimeout)
+
+	if err != nil {
+		fmt.Printf("Truck %d ERROR requesting connect: %v\n", ft.id, err)
+
+		ft.mu.Lock()
+		ft.hasWater = false
+		ft.mu.Unlock()
+
+		return
+	}
+
+	var resp WaterStatusResponse
+
+	if err := json.Unmarshal(respMsg.Data, &resp); err != nil {
+		fmt.Printf("Truck %d Error unmarshalling status response: %v\n", ft.id, err)
+		return
+	}
+
+	ft.mu.Lock()
+	ft.hasWater = resp.Status
+	ft.mu.Unlock()
+
+	if resp.Status {
+		fmt.Printf("✅ Truck %d CONNECTED (Reply received). hasWater=%t\n", ft.id, resp.Status)
 	} else {
-		fmt.Printf("🚒 Truck %d published connection request.\n", ft.id)
+		fmt.Printf("❌ Truck %d CONNECTION FAILED (Reply received). hasWater=%t\n", ft.id, resp.Status)
 	}
 }
 
@@ -54,11 +82,30 @@ func (ft *FireTruck) DisconnectWaterRequest() {
 	req := ConnectionRequest{TruckID: ft.id}
 	data, _ := json.Marshal(req)
 
-	// Publish request
-	if err := ft.bus.Publish(SubjectWaterDisconnect, data); err != nil {
-		fmt.Printf("Truck %d ERROR publishing disconnect: %v\n", ft.id, err)
+	fmt.Printf("🚒 Truck %d requesting disconnection on %s...\n", ft.id, SubjectWaterDisconnect)
+
+	respMsg, err := ft.bus.Request(SubjectWaterDisconnect, data, NatsRequestTimeout)
+
+	if err != nil {
+		fmt.Printf("Truck %d ERROR requesting disconnect: %v\n", ft.id, err)
+		return
+	}
+
+	var resp WaterStatusResponse
+
+	if err := json.Unmarshal(respMsg.Data, &resp); err != nil {
+		fmt.Printf("Truck %d Error unmarshalling status response: %v\n", ft.id, err)
+		return
+	}
+
+	ft.mu.Lock()
+	ft.hasWater = resp.Status
+	ft.mu.Unlock()
+
+	if !resp.Status {
+		fmt.Printf("❌ Truck %d DISCONNECTED (Reply received). hasWater=%t\n", ft.id, resp.Status)
 	} else {
-		fmt.Printf("🚒 Truck %d published disconnection request.\n", ft.id)
+		fmt.Printf("⚠️ Truck %d DISCONNECT warning (Reply received status: true). hasWater=%t\n", ft.id, resp.Status)
 	}
 }
 

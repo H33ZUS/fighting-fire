@@ -6,6 +6,8 @@ import (
 	"log"
 	"sync"
 	"time"
+
+	"github.com/nats-io/nats.go"
 )
 
 const MaxVolume = 1000
@@ -32,10 +34,24 @@ func NewWaterManager(bus MessageBus) *WaterManager {
 	return wm
 }
 
+func (wm *WaterManager) SendStatusRespone(msg *nats.Msg, truckID int, status bool) {
+	if msg.Reply == "" {
+		log.Printf("WM WARNING: Message from Truck %d has no reply subject.", truckID)
+		return
+	}
+
+	resp := WaterStatusResponse{TruckID: truckID, Status: status}
+	data, _ := json.Marshal(resp)
+
+	if err := msg.Respond(data); err != nil {
+		log.Printf("WM Error responding to Truck %d: %v", truckID, err)
+	}
+}
+
 func (wm *WaterManager) SetupNatsSubscriptions() {
-	if err := wm.bus.Subscribe(SubjectWaterConnect, func(msg []byte) {
+	if err := wm.bus.Subscribe(SubjectWaterConnect, func(msg *nats.Msg) {
 		var req ConnectionRequest
-		if err := json.Unmarshal(msg, &req); err != nil {
+		if err := json.Unmarshal(msg.Data, &req); err != nil {
 			log.Printf("WM Error unmarshaling connect request: %v", err)
 			return
 		}
@@ -44,13 +60,16 @@ func (wm *WaterManager) SetupNatsSubscriptions() {
 		wm.connections++
 		wm.mu.Unlock()
 		fmt.Printf("💧 Manager processed CONNECT for Truck %d. Active: %d\n", req.TruckID, wm.connections)
+
+		wm.SendStatusRespone(msg, req.TruckID, true)
+
 	}); err != nil {
 		log.Fatalf("FATAL: WM failed to subscribe to %s: %v", SubjectWaterConnect, err)
 	}
 
-	if err := wm.bus.Subscribe(SubjectWaterDisconnect, func(msg []byte) {
+	if err := wm.bus.Subscribe(SubjectWaterDisconnect, func(msg *nats.Msg) {
 		var req ConnectionRequest
-		if err := json.Unmarshal(msg, &req); err != nil {
+		if err := json.Unmarshal(msg.Data, &req); err != nil {
 			log.Printf("WM Error unmarshaling disconnect request: %v", err)
 			return
 		}
@@ -61,6 +80,8 @@ func (wm *WaterManager) SetupNatsSubscriptions() {
 		}
 		wm.mu.Unlock()
 		fmt.Printf("💧 Manager processed DISCONNECT for Truck %d. Active: %d\n", req.TruckID, wm.connections)
+
+		wm.SendStatusRespone(msg, req.TruckID, false)
 	}); err != nil {
 		log.Fatalf("FATAL: WM failed to subscribe to %s: %v", SubjectWaterDisconnect, err)
 	}
