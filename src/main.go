@@ -57,7 +57,6 @@ func main() {
 		y := rand.Intn(20)
 		if !grid[x][y].hasTruck {
 			firetrucks := CreateFiretruck(bus, &grid, gridSize, x, y, 1)
-			firetrucks.RequestWaterConnection()
 			go firetrucks.initial(ctx)
 		} else {
 			i--

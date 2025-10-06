@@ -42,6 +42,48 @@ func CreateFiretruck(bus MessageBus, grid *[][]Cell, gridsize int, positionX int
 	}
 }
 
+// TEMPORARY FUNCTION TO CHECK IF FIRE IS NEARBY --- NEEDED FOR FIRE EXTINGUISHING LOGIC
+func (ft *FireTruck) isFireNearby() bool {
+	// Acquire a read lock on the grid before reading its state
+	gridMutex.RLock() // Assuming gridMutex is defined globally in main.go or similar
+	defer gridMutex.RUnlock()
+
+	// Define the 8 surrounding directions (including diagonals)
+	directions := []struct{ dx, dy int }{{0, 1}, {0, -1}, {1, 0}, {-1, 0}, {1, 1}, {1, -1}, {-1, 1}, {-1, -1}}
+
+	for _, d := range directions {
+		nx, ny := ft.positionX+d.dx, ft.positionY+d.dy
+
+		// Check if the coordinates are valid and if the cell has fire
+		// We use (*ft.grid) to access the underlying grid slice
+		if nx >= 0 && nx < ft.gridsize && ny >= 0 && ny < ft.gridsize {
+			if (*ft.grid)[nx][ny].HasFire {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func (ft *FireTruck) SetWorkingStatus(status bool) {
+	ft.mu.Lock()
+	defer ft.mu.Unlock()
+
+	// since working status did not change (still fires nearby) continue extinguishing
+	if ft.isworking == status {
+		return
+	}
+
+	ft.isworking = status // change working status because all fires in range of firetruck are extinguished
+	fmt.Printf("🚒 Truck %d status changed: isworking=%t\n", ft.id, status)
+
+	if status {
+		ft.RequestWaterConnection() // Requests water
+	} else {
+		ft.DisconnectWaterRequest() // Disconnects from water supply
+	}
+}
+
 func (ft *FireTruck) RequestWaterConnection() {
 	req := ConnectionRequest{TruckID: ft.id}
 	data, _ := json.Marshal(req)
@@ -118,6 +160,10 @@ func (ft *FireTruck) initial(ctx context.Context) {
 	for {
 		select {
 		case <-ctx.Done():
+			// Check to make sure that if a truck spawns and hasWater is set to true to disconnect it from the water supply
+			if ft.hasWater {
+				ft.DisconnectWaterRequest()
+			}
 			return
 		case <-ticker.C:
 			ft.update()
@@ -142,4 +188,18 @@ func (ft *FireTruck) setPos(x int, y int) {
 }
 
 func (ft *FireTruck) update() {
+	ft.mu.RLock()
+	workingStatus := ft.isworking
+	ft.mu.RUnlock()
+
+	// temporarily checks if a fire is nearby
+	fireDetected := ft.isFireNearby()
+
+	if fireDetected && !workingStatus {
+		ft.SetWorkingStatus(true)
+	}
+
+	if !fireDetected && workingStatus {
+		ft.SetWorkingStatus(false)
+	}
 }

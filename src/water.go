@@ -99,11 +99,7 @@ func (wm *WaterManager) RefillWaterSupply(done <-chan struct{}) { // done channe
 			if wm.volume < MaxVolume {
 				newVolume := wm.volume + wm.refillRate
 
-				if newVolume > MaxVolume {
-					wm.volume = MaxVolume
-				} else {
-					wm.volume = newVolume
-				}
+				wm.volume = min(newVolume, MaxVolume)
 			}
 
 			if wm.connections > 0 {
