@@ -22,6 +22,7 @@ type FireTruck struct {
 	updateInterval time.Duration
 	hasWater       bool
 	fm             *FireManager
+	isConnecting   bool
 }
 
 const NatsRequestTimeout = 1 * time.Second
@@ -41,6 +42,7 @@ func CreateFiretruck(bus MessageBus, grid *[][]Cell, gridsize int, positionX int
 		updateInterval: updateInterval * time.Second,
 		hasWater:       false,
 		fm:             fm,
+		isConnecting:   false,
 	}
 }
 
@@ -69,46 +71,57 @@ func (ft *FireTruck) isFireNearby() (x, y int) {
 }
 
 func (ft *FireTruck) RequestWaterConnection() {
+	ft.mu.Lock()
+	if ft.hasWater || ft.isConnecting {
+		ft.mu.Unlock()
+		return
+	}
+
+	ft.isConnecting = true
+	ft.mu.Unlock()
+
 	req := ConnectionRequest{TruckID: ft.id}
 	data, _ := json.Marshal(req)
 
-	fmt.Printf("🚒 Truck %d requesting connection on %s...\n", ft.id, SubjectWaterConnect)
+	// fmt.Printf("🚒 Truck %d requesting connection on %s...\n", ft.id, SubjectWaterConnect)
 
-	respMsg, err := ft.bus.Request(SubjectWaterConnect, data, NatsRequestTimeout)
+	msg, err := ft.bus.Request(SubjectWaterConnect, data, NatsRequestTimeout)
+
+	defer func() {
+		ft.mu.Lock()
+		ft.isConnecting = false
+		ft.mu.Unlock()
+	}()
 
 	if err != nil {
-		fmt.Printf("Truck %d ERROR requesting connect: %v\n", ft.id, err)
-
-		ft.mu.Lock()
-		ft.hasWater = false
-		ft.mu.Unlock()
-
+		fmt.Printf("Truck %d ERROR requesting connection (NATS error): %v. Will retry.\n", ft.id, err)
 		return
 	}
 
 	var resp WaterStatusResponse
 
-	if err := json.Unmarshal(respMsg.Data, &resp); err != nil {
-		fmt.Printf("Truck %d Error unmarshalling status response: %v\n", ft.id, err)
+	if err := json.Unmarshal(msg.Data, &resp); err != nil {
+		fmt.Printf("Truck %d Error unmarshalling status response: %v. Will retry.\n", ft.id, err)
 		return
 	}
 
 	ft.mu.Lock()
 	ft.hasWater = resp.Status
 	ft.mu.Unlock()
-
-	if resp.Status {
-		fmt.Printf("✅ Truck %d CONNECTED (Reply received). hasWater=%t\n", ft.id, resp.Status)
-	} else {
-		fmt.Printf("❌ Truck %d CONNECTION FAILED (Reply received). hasWater=%t\n", ft.id, resp.Status)
-	}
+	/*
+		if resp.Status {
+			fmt.Printf("✅ Truck %d CONNECTED (Reply received). hasWater=%t\n", ft.id, resp.Status)
+		} else {
+			fmt.Printf("❌ Truck %d DENIED connection (Reply received). hasWater=%t. Will retry on next cycle.\n", ft.id, resp.Status)
+		}
+	*/
 }
 
 func (ft *FireTruck) DisconnectWaterRequest() {
 	req := ConnectionRequest{TruckID: ft.id}
 	data, _ := json.Marshal(req)
 
-	fmt.Printf("🚒 Truck %d requesting disconnection on %s...\n", ft.id, SubjectWaterDisconnect)
+	// fmt.Printf("🚒 Truck %d requesting disconnection on %s...\n", ft.id, SubjectWaterDisconnect)
 
 	respMsg, err := ft.bus.Request(SubjectWaterDisconnect, data, NatsRequestTimeout)
 
@@ -127,12 +140,13 @@ func (ft *FireTruck) DisconnectWaterRequest() {
 	ft.mu.Lock()
 	ft.hasWater = resp.Status
 	ft.mu.Unlock()
-
-	if !resp.Status {
-		fmt.Printf("❌ Truck %d DISCONNECTED (Reply received). hasWater=%t\n", ft.id, resp.Status)
-	} else {
-		fmt.Printf("⚠️ Truck %d DISCONNECT warning (Reply received status: true). hasWater=%t\n", ft.id, resp.Status)
-	}
+	/*
+		if !resp.Status {
+			fmt.Printf("❌ Truck %d DISCONNECTED (Reply received). hasWater=%t\n", ft.id, resp.Status)
+		} else {
+			fmt.Printf("⚠️ Truck %d DISCONNECT warning (Reply received status: true). hasWater=%t\n", ft.id, resp.Status)
+		}
+	*/
 }
 
 func (ft *FireTruck) initial(ctx context.Context) {
@@ -175,6 +189,7 @@ func (ft *FireTruck) update() {
 	ft.mu.RLock()
 	workingStatus := ft.isworking
 	hasWater := ft.hasWater
+	isConnecting := ft.isConnecting
 	ft.mu.RUnlock()
 
 	// temporarily checks if a fire is nearby
@@ -187,31 +202,24 @@ func (ft *FireTruck) update() {
 		ft.mu.Unlock()
 
 		workingStatus = true
-
-		if !hasWater {
-			ft.RequestWaterConnection()
-		}
 	}
 
-	if !fireDetected && workingStatus {
+	if workingStatus && !hasWater && !isConnecting {
+		go ft.RequestWaterConnection()
+	}
+
+	if workingStatus && fireDetected && hasWater {
+		ft.fm.ExtinguishFire(fireX, fireY)
+		// fmt.Printf("💦 Truck %d extinguishing fire at (%d, %d)\n", ft.id, fireX, fireY)
+	}
+
+	if workingStatus && !fireDetected {
+		if hasWater {
+			go ft.DisconnectWaterRequest()
+		}
+
 		ft.mu.Lock()
 		ft.isworking = false
 		ft.mu.Unlock()
-
-		workingStatus = false
-
-		if hasWater {
-			ft.DisconnectWaterRequest()
-		}
-	}
-	// fmt.Printf("working status: %t , has Water: %t , fire Detected: %t .\n", workingStatus, hasWater, fireDetected)
-	if workingStatus && fireDetected {
-		if hasWater {
-			ft.fm.ExtinguishFire(fireX, fireY)
-			fmt.Printf("💦 Truck %d extinguishing fire at (%d, %d)\n", ft.id, fireX, fireY)
-		} else {
-			// Working but no water yet (waiting for NATS reply)
-			fmt.Printf("⚠️ Truck %d waiting for water connection to fight fire at (%d, %d)\n", ft.id, fireX, fireY)
-		}
 	}
 }

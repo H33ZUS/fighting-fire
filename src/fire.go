@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"math/rand"
 	"sync"
 	"time"
@@ -250,6 +249,6 @@ func (fm *FireManager) ExtinguishFire(x, y int) {
 		(*fm.grid)[x][y].HasFire = false
 		(*fm.grid)[x][y].intensity = 0
 		fm.fireCount--
-		fmt.Printf("🔥 Fire extinguished at (%d, %d)\n", x, y)
+		// fmt.Printf("🔥 Fire extinguished at (%d, %d)\n", x, y)
 	}
 }

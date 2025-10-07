@@ -108,7 +108,7 @@ func main() {
 
 			fmt.Fprintf(consoleWriter, "\n")
 			fmt.Fprintf(consoleWriter, "%s", state)
-			// fmt.Fprintf(consoleWriter, "Active fires %d\n ", count)
+			fmt.Fprintf(consoleWriter, "Active fires %d\n ", count)
 
 			// FOR TESTING PURPOSES
 			// fmt.Printf("\n")

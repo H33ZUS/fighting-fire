@@ -2,7 +2,6 @@ package main
 
 import (
 	"encoding/json"
-	"fmt"
 	"log"
 	"sync"
 	"time"
@@ -27,7 +26,7 @@ func NewWaterManager(bus MessageBus) *WaterManager {
 		volume:          1000,
 		connections:     0,
 		refillRate:      50,
-		consumptionRate: 25,
+		consumptionRate: 20,
 		bus:             bus,
 	}
 	wm.SetupNatsSubscriptions()
@@ -57,11 +56,21 @@ func (wm *WaterManager) SetupNatsSubscriptions() {
 		}
 
 		wm.mu.Lock()
-		wm.connections++
-		wm.mu.Unlock()
-		fmt.Printf("💧 Manager processed CONNECT for Truck %d. Active: %d\n", req.TruckID, wm.connections)
 
-		wm.SendStatusRespone(msg, req.TruckID, true)
+		newConsumptionRate := (wm.connections + 1) * wm.consumptionRate
+
+		canConnect := wm.volume >= newConsumptionRate
+
+		if canConnect {
+			wm.connections++
+			// fmt.Printf("💧 Manager processed CONNECT for Truck %d. Active: %d (Volume: %d)\n", req.TruckID, wm.connections, wm.volume)
+			wm.SendStatusRespone(msg, req.TruckID, true)
+		} else {
+			// fmt.Printf("❌ Manager DENIED CONNECT for Truck %d. Active: %d (Volume: %d - NO WATER)\n", req.TruckID, wm.connections, wm.volume)
+			wm.SendStatusRespone(msg, req.TruckID, false)
+		}
+
+		wm.mu.Unlock()
 
 	}); err != nil {
 		log.Fatalf("FATAL: WM failed to subscribe to %s: %v", SubjectWaterConnect, err)
@@ -79,7 +88,7 @@ func (wm *WaterManager) SetupNatsSubscriptions() {
 			wm.connections--
 		}
 		wm.mu.Unlock()
-		fmt.Printf("💧 Manager processed DISCONNECT for Truck %d. Active: %d\n", req.TruckID, wm.connections)
+		// fmt.Printf("💧 Manager processed DISCONNECT for Truck %d. Active: %d\n", req.TruckID, wm.connections)
 
 		wm.SendStatusRespone(msg, req.TruckID, false)
 	}); err != nil {
@@ -96,11 +105,13 @@ func (wm *WaterManager) RefillWaterSupply(done <-chan struct{}) { // done channe
 		case <-ticker.C:
 			wm.mu.Lock()
 
-			consumption := wm.connections * wm.consumptionRate
-			wm.volume -= consumption
+			if wm.connections > 1 {
+				drain := wm.connections * wm.consumptionRate
+				wm.volume -= drain
 
-			if wm.volume < 0 {
-				wm.volume = 0
+				if wm.volume < 0 {
+					wm.volume = 0
+				}
 			}
 
 			if wm.volume < MaxVolume {
