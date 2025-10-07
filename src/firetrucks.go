@@ -3,15 +3,21 @@ package main
 import (
 	"container/heap"
 	"context"
+	"encoding/json"
 	"fightingfire/grid"
 	"fightingfire/helper"
 	priorityheap "fightingfire/helper"
+	"fmt"
 	"math"
 	"math/rand"
 	"time"
 )
 
-type fireTruck struct {
+var idCounter int = 1
+
+type FireTruck struct {
+	id             int
+	bus            MessageBus
 	gridsize       int
 	positionX      int
 	positionY      int
@@ -26,8 +32,12 @@ type object struct {
 	item int
 }
 
-func CreateFiretruck(grid *[][]grid.Cell, gridsize int, positionX int, positionY int, updateInterval time.Duration) *fireTruck {
-	return &fireTruck{
+func CreateFiretruck(bus MessageBus, gridsize int, positionX int, positionY int, updateInterval time.Duration) *FireTruck {
+	currentID := idCounter
+	idCounter++
+	return &FireTruck{
+		id:             currentID,
+		bus:            bus,
 		gridsize:       gridsize,
 		positionX:      positionX,
 		positionY:      positionY,
@@ -37,7 +47,31 @@ func CreateFiretruck(grid *[][]grid.Cell, gridsize int, positionX int, positionY
 	}
 }
 
-func (ft *fireTruck) initial(ctx context.Context) {
+func (ft *FireTruck) RequestWaterConnection() {
+	req := ConnectionRequest{TruckID: ft.id}
+	data, _ := json.Marshal(req)
+
+	// Publish request
+	if err := ft.bus.Publish(SubjectWaterConnect, data); err != nil {
+		fmt.Printf("Truck %d ERROR publishing connect: %v\n", ft.id, err)
+	} else {
+		fmt.Printf("🚒 Truck %d published connection request.\n", ft.id)
+	}
+}
+
+func (ft *FireTruck) DisconnectWaterRequest() {
+	req := ConnectionRequest{TruckID: ft.id}
+	data, _ := json.Marshal(req)
+
+	// Publish request
+	if err := ft.bus.Publish(SubjectWaterDisconnect, data); err != nil {
+		fmt.Printf("Truck %d ERROR publishing disconnect: %v\n", ft.id, err)
+	} else {
+		fmt.Printf("🚒 Truck %d published disconnection request.\n", ft.id)
+	}
+}
+
+func (ft *FireTruck) initial(ctx context.Context) {
 	ticker := time.NewTicker(ft.updateInterval)
 	defer ticker.Stop()
 
@@ -53,7 +87,7 @@ func (ft *fireTruck) initial(ctx context.Context) {
 	}
 }
 
-func (ft *fireTruck) spawn() bool {
+func (ft *FireTruck) spawn() bool {
 	grid.GridMutex.Lock()
 	defer grid.GridMutex.Unlock()
 
@@ -61,15 +95,15 @@ func (ft *fireTruck) spawn() bool {
 	return true
 }
 
-func (ft *fireTruck) clearPos() {
+func (ft *FireTruck) clearPos() {
 	grid.Grid[ft.positionX][ft.positionY].HasTruck = false
 }
 
-func (ft *fireTruck) setPos(x int, y int) {
+func (ft *FireTruck) setPos(x int, y int) {
 	grid.Grid[x][y].HasTruck = true
 }
 
-func (ft *fireTruck) checkPos(newX int, newY int) bool {
+func (ft *FireTruck) checkPos(newX int, newY int) bool {
 	if (newX >= 0 && newX < ft.gridsize && newY >= 0 && newY < ft.gridsize) && (!(grid.Grid)[newX][newY].HasTruck && !(grid.Grid)[newX][newY].HasFire) {
 		return true
 	} else {
@@ -77,7 +111,7 @@ func (ft *fireTruck) checkPos(newX int, newY int) bool {
 	}
 }
 
-func (ft *fireTruck) update() {
+func (ft *FireTruck) update() {
 	grid.GridMutex.Lock()
 	defer grid.GridMutex.Unlock()
 
@@ -91,7 +125,7 @@ func (ft *fireTruck) update() {
 
 }
 
-func (ft *fireTruck) vision(distance int) []object {
+func (ft *FireTruck) vision(distance int) []object {
 
 	var objects []object
 
@@ -111,7 +145,7 @@ func (ft *fireTruck) vision(distance int) []object {
 	return objects
 }
 
-func (ft *fireTruck) move(target helper.Object, state int) {
+func (ft *FireTruck) move(target helper.Object, state int) {
 
 	vecX := target.X - ft.positionX
 	vecY := target.Y - ft.positionY
@@ -157,13 +191,13 @@ func (ft *fireTruck) move(target helper.Object, state int) {
 	}
 }
 
-func (ft *fireTruck) distance(x int, y int) int {
+func (ft *FireTruck) distance(x int, y int) int {
 	dx := x - ft.positionX
 	dy := y - ft.positionY
 	return int(math.Abs(float64(dx)) + math.Abs(float64(dy)))
 }
 
-func (ft *fireTruck) guidedMove(target []object) {
+func (ft *FireTruck) guidedMove(target []object) {
 
 	pqfires := &priorityheap.ObjectHeap{}
 	heap.Init(pqfires)
@@ -196,7 +230,7 @@ func (ft *fireTruck) guidedMove(target []object) {
 }
 
 // move function for firetrucks not on job
-func (ft *fireTruck) freeMove(options []int) {
+func (ft *FireTruck) freeMove(options []int) {
 	// Clear current position
 	ft.clearPos()
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fightingfire/grid"
 	"fmt"
+	"log"
 	"math/rand"
 	"time"
 
@@ -11,6 +12,13 @@ import (
 )
 
 func main() {
+
+	natsURL := "nats://127.0.0.1:4222"
+	bus, err := NewNatsBus(natsURL)
+	if err != nil {
+		log.Fatalf("FATAL: Failed to connect to NATS server at %s: %v", natsURL, err)
+	}
+	defer bus.Close()
 
 	consoleWriter := uilive.New()
 	consoleWriter.Start()
@@ -28,14 +36,19 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background()) // creates root context and makes it cancellable
 	defer cancel()                                          // ensures cancel() is called when main exits
 
-	fireManager := NewFireManager(&grid.Grid, gridSize)
+	waterManagerDone := make(chan struct{})             // creates new channel for water supply for refilling
+	waterManager := NewWaterManager(bus)                // creates new water supply
+	go waterManager.RefillWaterSupply(waterManagerDone) // runs refill routine
+
+	fireManager := NewFireManager(gridSize)
 	fireManager.Start(ctx) // starts spawn goroutine, fire spawns every 5 sec
 
 	for i := 0; i < 10; i++ {
 		x := rand.Intn(20)
 		y := rand.Intn(20)
 		if !grid.Grid[x][y].HasTruck {
-			firetrucks := CreateFiretruck(&grid.Grid, gridSize, x, y, 1)
+			firetrucks := CreateFiretruck(bus, gridSize, x, y, 1)
+			firetrucks.RequestWaterConnection()
 			go firetrucks.initial(ctx)
 		} else {
 			i--
