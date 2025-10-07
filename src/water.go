@@ -105,13 +105,15 @@ func (wm *WaterManager) RefillWaterSupply(done <-chan struct{}) { // done channe
 		case <-ticker.C:
 			wm.mu.Lock()
 
-			if wm.connections > 1 {
+			if wm.connections > 0 {
 				drain := wm.connections * wm.consumptionRate
 				wm.volume -= drain
 
 				if wm.volume < 0 {
 					wm.volume = 0
 				}
+
+				// fmt.Printf("💧 Water Supply Update: Volume=%d/%d, Active Connections=%d, Total Consumption=%d\n", wm.volume, MaxVolume, wm.connections, drain)
 			}
 
 			if wm.volume < MaxVolume {
@@ -119,8 +121,6 @@ func (wm *WaterManager) RefillWaterSupply(done <-chan struct{}) { // done channe
 
 				wm.volume = min(newVolume, MaxVolume)
 			}
-
-			// fmt.Printf("💧 Water Supply Update: Volume=%d/%d, Active Connections=%d, Total Consumption=%d\n", wm.volume, MaxVolume, wm.connections, consumption)
 
 			wm.mu.Unlock()
 
