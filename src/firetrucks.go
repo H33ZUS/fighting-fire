@@ -6,10 +6,10 @@ import (
 	"encoding/json"
 	"fightingfire/grid"
 	"fightingfire/helper"
-	priorityheap "fightingfire/helper"
 	"fmt"
 	"math"
 	"math/rand"
+	"sync"
 	"time"
 )
 
@@ -23,16 +23,21 @@ type FireTruck struct {
 	positionY      int
 	isworking      bool
 	updateInterval time.Duration
+	hasWater       bool
+	fm             *FireManager
+	isConnecting   bool
 	visionRange    int
+	mu             sync.RWMutex
 }
-
 type object struct {
 	x    int
 	y    int
 	item int
 }
 
-func CreateFiretruck(bus MessageBus, gridsize int, positionX int, positionY int, updateInterval time.Duration) *FireTruck {
+const NatsRequestTimeout = 1 * time.Second
+
+func CreateFiretruck(bus MessageBus, gridsize int, positionX int, positionY int, updateInterval time.Duration, fm *FireManager) *FireTruck {
 	currentID := idCounter
 	idCounter++
 	return &FireTruck{
@@ -43,32 +48,114 @@ func CreateFiretruck(bus MessageBus, gridsize int, positionX int, positionY int,
 		positionY:      positionY,
 		isworking:      false,
 		updateInterval: updateInterval * time.Second,
+		hasWater:       false,
+		fm:             fm,
+		isConnecting:   false,
 		visionRange:    5,
 	}
 }
 
+// TEMPORARY FUNCTION TO CHECK IF FIRE IS NEARBY --- NEEDED FOR FIRE EXTINGUISHING LOGIC
+func (ft *FireTruck) isFireNearby() (x, y int) {
+	// Acquire a read lock on the grid before reading its state
+	grid.GridMutex.RLock() // Assuming gridMutex is defined globally in main.go or similar
+	defer grid.GridMutex.RUnlock()
+
+	// Define the 8 surrounding directions (including diagonals)
+	directions := []struct{ dx, dy int }{{0, 1}, {0, -1}, {1, 0}, {-1, 0}, {1, 1}, {1, -1}, {-1, 1}, {-1, -1}}
+	//directions := []struct{ dx, dy int }{{0, 1}, {0, -1}, {1, 0}, {-1, 0}}
+
+	for _, d := range directions {
+		nx, ny := ft.positionX+d.dx, ft.positionY+d.dy
+
+		// Check if the coordinates are valid and if the cell has fire
+		// We use (*ft.grid) to access the underlying grid slice
+		if nx >= 0 && nx < ft.gridsize && ny >= 0 && ny < ft.gridsize {
+			if (grid.Grid)[nx][ny].HasFire {
+				return nx, ny
+			}
+		}
+	}
+	return -2, -1 // hardcoded values so it is out of range
+}
+
 func (ft *FireTruck) RequestWaterConnection() {
+	ft.mu.Lock()
+	if ft.hasWater || ft.isConnecting {
+		ft.mu.Unlock()
+		return
+	}
+
+	ft.isConnecting = true
+	ft.mu.Unlock()
+
 	req := ConnectionRequest{TruckID: ft.id}
 	data, _ := json.Marshal(req)
 
-	// Publish request
-	if err := ft.bus.Publish(SubjectWaterConnect, data); err != nil {
-		fmt.Printf("Truck %d ERROR publishing connect: %v\n", ft.id, err)
-	} else {
-		fmt.Printf("🚒 Truck %d published connection request.\n", ft.id)
+	// fmt.Printf("🚒 Truck %d requesting connection on %s...\n", ft.id, SubjectWaterConnect)
+
+	msg, err := ft.bus.Request(SubjectWaterConnect, data, NatsRequestTimeout)
+
+	defer func() {
+		ft.mu.Lock()
+		ft.isConnecting = false
+		ft.mu.Unlock()
+	}()
+
+	if err != nil {
+		fmt.Printf("Truck %d ERROR requesting connection (NATS error): %v. Will retry.\n", ft.id, err)
+		return
 	}
+
+	var resp WaterStatusResponse
+
+	if err := json.Unmarshal(msg.Data, &resp); err != nil {
+		fmt.Printf("Truck %d Error unmarshalling status response: %v. Will retry.\n", ft.id, err)
+		return
+	}
+
+	ft.mu.Lock()
+	ft.hasWater = resp.Status
+	ft.mu.Unlock()
+	/*
+		if resp.Status {
+			fmt.Printf("✅ Truck %d CONNECTED (Reply received). hasWater=%t\n", ft.id, resp.Status)
+		} else {
+			fmt.Printf("❌ Truck %d DENIED connection (Reply received). hasWater=%t. Will retry on next cycle.\n", ft.id, resp.Status)
+		}
+	*/
 }
 
 func (ft *FireTruck) DisconnectWaterRequest() {
 	req := ConnectionRequest{TruckID: ft.id}
 	data, _ := json.Marshal(req)
 
-	// Publish request
-	if err := ft.bus.Publish(SubjectWaterDisconnect, data); err != nil {
-		fmt.Printf("Truck %d ERROR publishing disconnect: %v\n", ft.id, err)
-	} else {
-		fmt.Printf("🚒 Truck %d published disconnection request.\n", ft.id)
+	// fmt.Printf("🚒 Truck %d requesting disconnection on %s...\n", ft.id, SubjectWaterDisconnect)
+
+	respMsg, err := ft.bus.Request(SubjectWaterDisconnect, data, NatsRequestTimeout)
+
+	if err != nil {
+		fmt.Printf("Truck %d ERROR requesting disconnect: %v\n", ft.id, err)
+		return
 	}
+
+	var resp WaterStatusResponse
+
+	if err := json.Unmarshal(respMsg.Data, &resp); err != nil {
+		fmt.Printf("Truck %d Error unmarshalling status response: %v\n", ft.id, err)
+		return
+	}
+
+	ft.mu.Lock()
+	ft.hasWater = resp.Status
+	ft.mu.Unlock()
+	/*
+		if !resp.Status {
+			fmt.Printf("❌ Truck %d DISCONNECTED (Reply received). hasWater=%t\n", ft.id, resp.Status)
+		} else {
+			fmt.Printf("⚠️ Truck %d DISCONNECT warning (Reply received status: true). hasWater=%t\n", ft.id, resp.Status)
+		}
+	*/
 }
 
 func (ft *FireTruck) initial(ctx context.Context) {
@@ -80,6 +167,10 @@ func (ft *FireTruck) initial(ctx context.Context) {
 	for {
 		select {
 		case <-ctx.Done():
+			// Check to make sure that if a truck spawns and hasWater is set to true to disconnect it from the water supply
+			if ft.hasWater {
+				ft.DisconnectWaterRequest()
+			}
 			return
 		case <-ticker.C:
 			ft.update()
@@ -112,8 +203,35 @@ func (ft *FireTruck) checkPos(newX int, newY int) bool {
 }
 
 func (ft *FireTruck) update() {
+	ft.mu.RLock()
+	workingStatus := ft.isworking
+	hasWater := ft.hasWater
+	isConnecting := ft.isConnecting
+	ft.mu.RUnlock()
+
+	// temporarily checks if a fire is nearby
+	fireX, fireY := ft.isFireNearby()
+	fireDetected := fireX != -2
+
+	if fireDetected && !workingStatus {
+		ft.mu.Lock()
+		ft.isworking = true
+		ft.mu.Unlock()
+
+		workingStatus = true
+	}
+
+	if workingStatus && !hasWater && !isConnecting {
+		go ft.RequestWaterConnection()
+	}
+
 	grid.GridMutex.Lock()
 	defer grid.GridMutex.Unlock()
+
+	if workingStatus && fireDetected && hasWater {
+		ft.fm.ExtinguishFire(fireX, fireY)
+		// fmt.Printf("💦 Truck %d extinguishing fire at (%d, %d)\n", ft.id, fireX, fireY)
+	}
 
 	objects := ft.vision(ft.visionRange)
 
@@ -123,6 +241,15 @@ func (ft *FireTruck) update() {
 		ft.guidedMove(objects)
 	}
 
+	if workingStatus && !fireDetected {
+		if hasWater {
+			go ft.DisconnectWaterRequest()
+		}
+
+		ft.mu.Lock()
+		ft.isworking = false
+		ft.mu.Unlock()
+	}
 }
 
 func (ft *FireTruck) vision(distance int) []object {
@@ -199,29 +326,29 @@ func (ft *FireTruck) distance(x int, y int) int {
 
 func (ft *FireTruck) guidedMove(target []object) {
 
-	pqfires := &priorityheap.ObjectHeap{}
+	pqfires := &helper.ObjectHeap{}
 	heap.Init(pqfires)
 
-	pqtrucks := &priorityheap.ObjectHeap{}
+	pqtrucks := &helper.ObjectHeap{}
 	heap.Init(pqtrucks)
 
 	for i := 0; i < len(target); i++ {
 		switch target[i].item {
 		case 0:
-			heap.Push(pqfires, priorityheap.Object{X: target[i].x, Y: target[i].y, Priority: ft.distance(target[i].x, target[i].y)})
+			heap.Push(pqfires, helper.Object{X: target[i].x, Y: target[i].y, Priority: ft.distance(target[i].x, target[i].y)})
 		case 1:
-			heap.Push(pqtrucks, priorityheap.Object{X: target[i].x, Y: target[i].y, Priority: ft.distance(target[i].x, target[i].y)})
+			heap.Push(pqtrucks, helper.Object{X: target[i].x, Y: target[i].y, Priority: ft.distance(target[i].x, target[i].y)})
 		}
 	}
 
 	if pqfires.Len() > 0 {
-		m := heap.Pop(pqfires).(priorityheap.Object)
+		m := heap.Pop(pqfires).(helper.Object)
 
 		ft.move(m, 0)
 
 		ft.setPos(ft.positionX, ft.positionY)
 	} else {
-		m := heap.Pop(pqtrucks).(priorityheap.Object)
+		m := heap.Pop(pqtrucks).(helper.Object)
 
 		ft.move(m, 1)
 		// Set new position

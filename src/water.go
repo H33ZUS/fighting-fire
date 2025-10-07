@@ -2,10 +2,11 @@ package main
 
 import (
 	"encoding/json"
-	"fmt"
 	"log"
 	"sync"
 	"time"
+
+	"github.com/nats-io/nats.go"
 )
 
 const MaxVolume = 1000
@@ -25,32 +26,59 @@ func NewWaterManager(bus MessageBus) *WaterManager {
 		volume:          1000,
 		connections:     0,
 		refillRate:      50,
-		consumptionRate: 10,
+		consumptionRate: 20,
 		bus:             bus,
 	}
 	wm.SetupNatsSubscriptions()
 	return wm
 }
 
+func (wm *WaterManager) SendStatusRespone(msg *nats.Msg, truckID int, status bool) {
+	if msg.Reply == "" {
+		log.Printf("WM WARNING: Message from Truck %d has no reply subject.", truckID)
+		return
+	}
+
+	resp := WaterStatusResponse{TruckID: truckID, Status: status}
+	data, _ := json.Marshal(resp)
+
+	if err := msg.Respond(data); err != nil {
+		log.Printf("WM Error responding to Truck %d: %v", truckID, err)
+	}
+}
+
 func (wm *WaterManager) SetupNatsSubscriptions() {
-	if err := wm.bus.Subscribe(SubjectWaterConnect, func(msg []byte) {
+	if err := wm.bus.Subscribe(SubjectWaterConnect, func(msg *nats.Msg) {
 		var req ConnectionRequest
-		if err := json.Unmarshal(msg, &req); err != nil {
+		if err := json.Unmarshal(msg.Data, &req); err != nil {
 			log.Printf("WM Error unmarshaling connect request: %v", err)
 			return
 		}
 
 		wm.mu.Lock()
-		wm.connections++
+
+		newConsumptionRate := (wm.connections + 1) * wm.consumptionRate
+
+		canConnect := wm.volume >= newConsumptionRate
+
+		if canConnect {
+			wm.connections++
+			// fmt.Printf("💧 Manager processed CONNECT for Truck %d. Active: %d (Volume: %d)\n", req.TruckID, wm.connections, wm.volume)
+			wm.SendStatusRespone(msg, req.TruckID, true)
+		} else {
+			// fmt.Printf("❌ Manager DENIED CONNECT for Truck %d. Active: %d (Volume: %d - NO WATER)\n", req.TruckID, wm.connections, wm.volume)
+			wm.SendStatusRespone(msg, req.TruckID, false)
+		}
+
 		wm.mu.Unlock()
-		fmt.Printf("💧 Manager processed CONNECT for Truck %d. Active: %d\n", req.TruckID, wm.connections)
+
 	}); err != nil {
 		log.Fatalf("FATAL: WM failed to subscribe to %s: %v", SubjectWaterConnect, err)
 	}
 
-	if err := wm.bus.Subscribe(SubjectWaterDisconnect, func(msg []byte) {
+	if err := wm.bus.Subscribe(SubjectWaterDisconnect, func(msg *nats.Msg) {
 		var req ConnectionRequest
-		if err := json.Unmarshal(msg, &req); err != nil {
+		if err := json.Unmarshal(msg.Data, &req); err != nil {
 			log.Printf("WM Error unmarshaling disconnect request: %v", err)
 			return
 		}
@@ -60,7 +88,9 @@ func (wm *WaterManager) SetupNatsSubscriptions() {
 			wm.connections--
 		}
 		wm.mu.Unlock()
-		fmt.Printf("💧 Manager processed DISCONNECT for Truck %d. Active: %d\n", req.TruckID, wm.connections)
+		// fmt.Printf("💧 Manager processed DISCONNECT for Truck %d. Active: %d\n", req.TruckID, wm.connections)
+
+		wm.SendStatusRespone(msg, req.TruckID, false)
 	}); err != nil {
 		log.Fatalf("FATAL: WM failed to subscribe to %s: %v", SubjectWaterDisconnect, err)
 	}
@@ -75,21 +105,21 @@ func (wm *WaterManager) RefillWaterSupply(done <-chan struct{}) { // done channe
 		case <-ticker.C:
 			wm.mu.Lock()
 
+			if wm.connections > 0 {
+				drain := wm.connections * wm.consumptionRate
+				wm.volume -= drain
+
+				if wm.volume < 0 {
+					wm.volume = 0
+				}
+
+				// fmt.Printf("💧 Water Supply Update: Volume=%d/%d, Active Connections=%d, Total Consumption=%d\n", wm.volume, MaxVolume, wm.connections, drain)
+			}
+
 			if wm.volume < MaxVolume {
 				newVolume := wm.volume + wm.refillRate
 
-				if newVolume > MaxVolume {
-					wm.volume = MaxVolume
-				} else {
-					wm.volume = newVolume
-				}
-			}
-
-			if wm.connections > 0 {
-				// For now, just print the required consumption,
-				// actual consumption/allocation logic will go here later.
-				required := wm.connections * wm.consumptionRate
-				_ = required
+				wm.volume = min(newVolume, MaxVolume)
 			}
 
 			wm.mu.Unlock()

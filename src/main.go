@@ -46,9 +46,10 @@ func main() {
 	for i := 0; i < 10; i++ {
 		x := rand.Intn(20)
 		y := rand.Intn(20)
+
 		if !grid.Grid[x][y].HasTruck {
-			firetrucks := CreateFiretruck(bus, gridSize, x, y, 1)
-			firetrucks.RequestWaterConnection()
+			firetrucks := CreateFiretruck(bus, gridSize, x, y, 1, fireManager)
+
 			go firetrucks.initial(ctx)
 		} else {
 			i--
@@ -101,6 +102,17 @@ func main() {
 			fmt.Fprintf(consoleWriter, "\n")
 			fmt.Fprintf(consoleWriter, "%s", state)
 			fmt.Fprintf(consoleWriter, "Active fires %d\n ", count)
+
+			// FOR TESTING PURPOSES
+			// fmt.Printf("\n")
+			// fmt.Printf("%s", state)
+
+			// access current volume of water supply for printing purpose
+			waterManager.mu.Lock()
+			currentVolume := waterManager.volume
+			waterManager.mu.Unlock()
+			fmt.Fprintf(consoleWriter, "Water Supply %d\n ", currentVolume)
+
 			grid.GridMutex.RUnlock()
 		}
 	}

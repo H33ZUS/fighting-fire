@@ -17,13 +17,15 @@ type FireManager struct {
 	fireCount      int
 }
 
+const FireExtinguishRate = 3
+
 func NewFireManager(gridSize int) *FireManager {
 
 	return &FireManager{
 		gridSize:       gridSize,
 		spawnInterval:  5 * time.Second,
 		spreadInterval: 4 * time.Second,
-		growthInterval: 3 * time.Second,
+		growthInterval: 6 * time.Second,
 		maxFires:       10,
 		spreadProb:     0.3,
 	}
@@ -226,4 +228,20 @@ func (fm *FireManager) getIntensity(x, y int) int {
 	}
 
 	return (grid.Grid)[x][y].Intensity
+}
+
+func (fm *FireManager) ExtinguishFire(x, y int) {
+	// if there is no fire to extinguish (false function call)
+	if !fm.isValidCoordinate(x, y) || !(grid.Grid)[x][y].HasFire {
+		return
+	}
+
+	(grid.Grid)[x][y].Intensity -= FireExtinguishRate
+
+	if (grid.Grid)[x][y].Intensity <= 0 {
+		(grid.Grid)[x][y].HasFire = false
+		(grid.Grid)[x][y].Intensity = 0
+		fm.fireCount--
+		// fmt.Printf("🔥 Fire extinguished at (%d, %d)\n", x, y)
+	}
 }
