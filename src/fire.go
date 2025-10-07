@@ -2,14 +2,12 @@ package main
 
 import (
 	"context"
+	"fightingfire/grid"
 	"math/rand"
-	"sync"
 	"time"
 )
 
 type FireManager struct {
-	grid           *[][]Cell
-	mu             sync.RWMutex
 	gridSize       int
 	spawnInterval  time.Duration
 	spreadInterval time.Duration
@@ -21,10 +19,9 @@ type FireManager struct {
 
 const FireExtinguishRate = 3
 
-func NewFireManager(grid *[][]Cell, gridSize int) *FireManager {
+func NewFireManager(gridSize int) *FireManager {
 
 	return &FireManager{
-		grid:           grid,
 		gridSize:       gridSize,
 		spawnInterval:  5 * time.Second,
 		spreadInterval: 4 * time.Second,
@@ -110,46 +107,45 @@ func (fm *FireManager) tryRandomSpawnFire() {
 
 func (fm *FireManager) HasFire(x, y int) bool {
 
-	fm.mu.RLock()
-	defer fm.mu.RUnlock()
+	grid.GridMutex.RLock()
+	defer grid.GridMutex.RUnlock()
 
 	if !fm.isValidCoordinate(x, y) {
 		return false
 	}
-	return (*fm.grid)[x][y].HasFire
+	return (grid.Grid)[x][y].HasFire
 }
 
 func (fm *FireManager) spawnFire(x, y int) bool {
-	fm.mu.Lock()
-	defer fm.mu.Unlock() // locks the grid and unlocks it when this func returns
+	grid.GridMutex.Lock()
+	defer grid.GridMutex.Unlock() // locks the grid and unlocks it when this func returns
 
 	if !fm.isValidCoordinate(x, y) {
 		return false
 	}
 
-	if (*fm.grid)[x][y].HasFire {
+	if (grid.Grid)[x][y].HasFire {
 		return false
 	}
 
-	(*fm.grid)[x][y].HasFire = true
-	(*fm.grid)[x][y].intensity = 1
+	(grid.Grid)[x][y].HasFire = true
+	(grid.Grid)[x][y].Intensity = 1
 	fm.fireCount++
 	return true
-
 }
 
 func (fm *FireManager) countActiveFires() int {
 
-	fm.mu.RLock()
-	defer fm.mu.RUnlock()
+	grid.GridMutex.RLock()
+	defer grid.GridMutex.RUnlock()
 
 	return fm.fireCount
 }
 
 func (fm *FireManager) hasAdjacentFire(x, y int) bool {
 
-	fm.mu.RLock()
-	defer fm.mu.RUnlock()
+	grid.GridMutex.RLock()
+	defer grid.GridMutex.RUnlock()
 
 	directions := []struct{ dx, dy int }{
 		{-1, 0}, {1, 0}, {0, -1}, {0, 1}, {-1, -1}, {-1, 1}, {1, -1}, {1, 1},
@@ -157,7 +153,7 @@ func (fm *FireManager) hasAdjacentFire(x, y int) bool {
 
 	for _, d := range directions {
 		nx, ny := x+d.dx, y+d.dy
-		if fm.isValidCoordinate(nx, ny) && (*fm.grid)[nx][ny].HasFire {
+		if fm.isValidCoordinate(nx, ny) && (grid.Grid)[nx][ny].HasFire {
 			return true
 		}
 	}
@@ -166,13 +162,13 @@ func (fm *FireManager) hasAdjacentFire(x, y int) bool {
 
 func (fm *FireManager) growFires() {
 
-	fm.mu.Lock()
-	defer fm.mu.Unlock()
+	grid.GridMutex.RLock()
+	defer grid.GridMutex.RUnlock()
 
 	for i := 0; i < fm.gridSize; i++ {
 		for j := 0; j < fm.gridSize; j++ {
-			if (*fm.grid)[i][j].HasFire {
-				(*fm.grid)[i][j].intensity *= 2
+			if (grid.Grid)[i][j].HasFire {
+				(grid.Grid)[i][j].Intensity *= 2
 			}
 		}
 	}
@@ -181,14 +177,14 @@ func (fm *FireManager) growFires() {
 
 func (fm *FireManager) spreadFires() {
 
-	fm.mu.Lock()
-	defer fm.mu.Unlock()
+	grid.GridMutex.Lock()
+	defer grid.GridMutex.Unlock()
 
 	var fireLocations [][2]int
 
 	for i := 0; i < fm.gridSize; i++ {
 		for j := 0; j < fm.gridSize; j++ {
-			if (*fm.grid)[i][j].HasFire {
+			if (grid.Grid)[i][j].HasFire {
 				fireLocations = append(fireLocations, [2]int{i, j})
 			}
 		}
@@ -215,39 +211,36 @@ func (fm *FireManager) spreadFrom(x, y int) {
 			continue
 		}
 
-		if !(*fm.grid)[nx][ny].HasFire && rand.Float64() < fm.spreadProb {
-			(*fm.grid)[nx][ny].HasFire = true
-			(*fm.grid)[nx][ny].intensity = 1
+		if !(grid.Grid)[nx][ny].HasFire && rand.Float64() < fm.spreadProb {
+			(grid.Grid)[nx][ny].HasFire = true
+			(grid.Grid)[nx][ny].Intensity = 1
 		}
 	}
 }
 
 func (fm *FireManager) getIntensity(x, y int) int {
 
-	fm.mu.RLock()
-	defer fm.mu.RUnlock()
+	grid.GridMutex.RLock()
+	defer grid.GridMutex.RUnlock()
 
-	if !fm.isValidCoordinate(x, y) || !(*fm.grid)[x][y].HasFire {
+	if !fm.isValidCoordinate(x, y) || !(grid.Grid)[x][y].HasFire {
 		return 0
 	}
 
-	return (*fm.grid)[x][y].intensity
+	return (grid.Grid)[x][y].Intensity
 }
 
 func (fm *FireManager) ExtinguishFire(x, y int) {
-	fm.mu.Lock()
-	defer fm.mu.Unlock()
-
 	// if there is no fire to extinguish (false function call)
-	if !fm.isValidCoordinate(x, y) || !(*fm.grid)[x][y].HasFire {
+	if !fm.isValidCoordinate(x, y) || !(grid.Grid)[x][y].HasFire {
 		return
 	}
 
-	(*fm.grid)[x][y].intensity -= FireExtinguishRate
+	(grid.Grid)[x][y].Intensity -= FireExtinguishRate
 
-	if (*fm.grid)[x][y].intensity <= 0 {
-		(*fm.grid)[x][y].HasFire = false
-		(*fm.grid)[x][y].intensity = 0
+	if (grid.Grid)[x][y].Intensity <= 0 {
+		(grid.Grid)[x][y].HasFire = false
+		(grid.Grid)[x][y].Intensity = 0
 		fm.fireCount--
 		// fmt.Printf("🔥 Fire extinguished at (%d, %d)\n", x, y)
 	}
