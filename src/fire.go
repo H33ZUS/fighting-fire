@@ -2,14 +2,13 @@ package main
 
 import (
 	"context"
+	"fightingfire/grid"
 	"math/rand"
-	"sync"
 	"time"
 )
 
 type FireManager struct {
-	grid           *[][]Cell
-	mu             sync.RWMutex
+	grid           *[][]grid.Cell
 	gridSize       int
 	spawnInterval  time.Duration
 	spreadInterval time.Duration
@@ -19,7 +18,7 @@ type FireManager struct {
 	fireCount      int
 }
 
-func NewFireManager(grid *[][]Cell, gridSize int) *FireManager {
+func NewFireManager(grid *[][]grid.Cell, gridSize int) *FireManager {
 
 	return &FireManager{
 		grid:           grid,
@@ -60,13 +59,13 @@ func (fm *FireManager) isValidCoordinate(x, y int) bool {
 }
 
 func (fm *FireManager) hasFire(x, y int) bool {
-	fm.mu.RLock()
-	defer fm.mu.RUnlock() // allows multiple goroutines to read at once
+	grid.GridMutex.RLock()
+	defer grid.GridMutex.RUnlock() // allows multiple goroutines to read at once
 
 	if !fm.isValidCoordinate(x, y) {
 		return false
 	}
-	return (*fm.grid)[x][y].hasFire
+	return (*fm.grid)[x][y].HasFire
 }
 
 func (fm *FireManager) tryRandomSpawnFire() {
@@ -82,19 +81,19 @@ func (fm *FireManager) tryRandomSpawnFire() {
 }
 
 func (fm *FireManager) spawnFire(x, y int) bool {
-	fm.mu.Lock()
-	defer fm.mu.Unlock() // locks the grid and unlocks it when this func returns
+	grid.GridMutex.Lock()
+	defer grid.GridMutex.Unlock() // locks the grid and unlocks it when this func returns
 
 	if !fm.isValidCoordinate(x, y) {
 		return false
 	}
 
-	if (*fm.grid)[x][y].hasFire {
+	if (*fm.grid)[x][y].HasFire {
 		return false
 	}
 
-	(*fm.grid)[x][y].hasFire = true
-	(*fm.grid)[x][y].intensity = 1
+	(*fm.grid)[x][y].HasFire = true
+	(*fm.grid)[x][y].Intensity = 1
 	fm.fireCount++
 	return true
 
@@ -102,8 +101,8 @@ func (fm *FireManager) spawnFire(x, y int) bool {
 
 func (fm *FireManager) countActiveFires() int {
 
-	fm.mu.RLock()
-	defer fm.mu.RUnlock()
+	grid.GridMutex.RLock()
+	defer grid.GridMutex.RUnlock()
 
 	return fm.fireCount
 }

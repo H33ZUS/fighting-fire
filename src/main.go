@@ -2,22 +2,13 @@ package main
 
 import (
 	"context"
+	"fightingfire/grid"
 	"fmt"
 	"math/rand"
-	"sync"
 	"time"
 
 	"github.com/gosuri/uilive"
 )
-
-type Cell struct {
-	hasFire   bool
-	hasTruck  bool
-	intensity int
-}
-
-var grid [][]Cell
-var gridMutex sync.RWMutex
 
 func main() {
 
@@ -25,10 +16,10 @@ func main() {
 	consoleWriter.Start()
 
 	gridSize := 20
-	grid = make([][]Cell, gridSize)
+	grid.Grid = make([][]grid.Cell, gridSize)
 
-	for i := range grid {
-		grid[i] = make([]Cell, gridSize)
+	for i := range grid.Grid {
+		grid.Grid[i] = make([]grid.Cell, gridSize)
 	}
 	// fmt.Println(grid)
 
@@ -37,18 +28,14 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background()) // creates root context and makes it cancellable
 	defer cancel()                                          // ensures cancel() is called when main exits
 
-	waterManagerDone := make(chan struct{})             // creates new channel for water supply for refilling
-	waterManager := NewWaterManager()                   // creates new water supply
-	go waterManager.RefillWaterSupply(waterManagerDone) // runs refill routine
-
-	fireManager := NewFireManager(&grid, gridSize)
+	fireManager := NewFireManager(&grid.Grid, gridSize)
 	fireManager.Start(ctx) // starts spawn goroutine, fire spawns every 5 sec
 
 	for i := 0; i < 10; i++ {
 		x := rand.Intn(20)
 		y := rand.Intn(20)
-		if !grid[x][y].hasTruck {
-			firetrucks := CreateFiretruck(&grid, gridSize, x, y, 1)
+		if !grid.Grid[x][y].HasTruck {
+			firetrucks := CreateFiretruck(&grid.Grid, gridSize, x, y, 1)
 			go firetrucks.initial(ctx)
 		} else {
 			i--
@@ -64,7 +51,6 @@ func main() {
 		select {
 		case <-timeout:
 			fmt.Println("\nSimulation ended")
-			close(waterManagerDone)            // closes water supply channel
 			cancel()                           // stop all goroutines
 			time.Sleep(500 * time.Millisecond) // give time for clean up
 			return
@@ -73,22 +59,23 @@ func main() {
 			count := 0
 			for i := 0; i < gridSize; i++ {
 				for j := 0; j < gridSize; j++ {
-					if grid[i][j].hasFire {
+					if grid.Grid[i][j].HasFire {
 						count++
 					}
 				}
 			}
 
+			grid.GridMutex.RLock()
 			//Draws the state of the simulation
-			size := len(grid)
+			size := len(grid.Grid)
 			var state string
 
 			for i := 0; i < size; i++ {
 				for j := 0; j < size; j++ {
 					var cell string
-					if grid[i][j].hasFire {
+					if grid.Grid[i][j].HasFire {
 						cell = "\033[31m🔥 \033[0m"
-					} else if grid[i][j].hasTruck {
+					} else if grid.Grid[i][j].HasTruck {
 						cell = "🚒 "
 					} else {
 						cell = "\033[32m🌲 \033[0m"
@@ -101,13 +88,7 @@ func main() {
 			fmt.Fprintf(consoleWriter, "\n")
 			fmt.Fprintf(consoleWriter, "%s", state)
 			fmt.Fprintf(consoleWriter, "Active fires %d\n ", count)
-
-			// access current volume of water supply for printing purpose
-			waterManager.mu.Lock()
-			currentVolume := waterManager.volume
-			waterManager.mu.Unlock()
-			fmt.Fprintf(consoleWriter, "Water Supply %d\n ", currentVolume)
-
+			grid.GridMutex.RUnlock()
 		}
 	}
 }
