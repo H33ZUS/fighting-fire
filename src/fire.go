@@ -211,6 +211,10 @@ func (fm *FireManager) spreadFrom(x, y int) {
 			continue
 		}
 
+		if grid.Grid[nx][ny].HasTruck { // If tile has fire truck, skip it
+			continue
+		}
+
 		if !(grid.Grid)[nx][ny].HasFire && rand.Float64() < fm.spreadProb {
 			(grid.Grid)[nx][ny].HasFire = true
 			(grid.Grid)[nx][ny].Intensity = 1

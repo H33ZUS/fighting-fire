@@ -26,7 +26,7 @@ func NewWaterManager(bus MessageBus) *WaterManager {
 		volume:          1000,
 		connections:     0,
 		refillRate:      50,
-		consumptionRate: 20,
+		consumptionRate: 50,
 		bus:             bus,
 	}
 	wm.SetupNatsSubscriptions()
