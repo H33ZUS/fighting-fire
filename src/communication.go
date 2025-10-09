@@ -6,7 +6,9 @@ const (
 )
 
 type ConnectionRequest struct {
-	TruckID int `json:"id"`
+	TruckID   int `json:"id"`
+	Timestamp int `json:"timestamp"`
+	Reply     string
 }
 
 type WaterStatusResponse struct {

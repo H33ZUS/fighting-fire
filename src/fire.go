@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fightingfire/grid"
+	"fmt"
 	"math/rand"
 	"time"
 )
@@ -15,6 +16,7 @@ type FireManager struct {
 	maxFires       int
 	spreadProb     float64 // probability of fires spreading to neighbour
 	fireCount      int
+	clock          *LamportClock
 }
 
 const FireExtinguishRate = 3
@@ -28,6 +30,7 @@ func NewFireManager(gridSize int) *FireManager {
 		growthInterval: 6 * time.Second,
 		maxFires:       10,
 		spreadProb:     0.3,
+		clock:          NewLamportClock(),
 	}
 }
 
@@ -239,10 +242,13 @@ func (fm *FireManager) getIntensity(x, y int) int {
 }
 
 func (fm *FireManager) ExtinguishFire(x, y int) {
+	timestamp := fm.clock.Tick()
 	// if there is no fire to extinguish (false function call)
 	if !fm.isValidCoordinate(x, y) || !(grid.Grid)[x][y].HasFire {
 		return
 	}
+
+	fmt.Printf("EXTINGUISH fire at (%d,%d) at time %d\n", x, y, timestamp)
 
 	(grid.Grid)[x][y].Intensity -= FireExtinguishRate
 
