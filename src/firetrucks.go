@@ -28,6 +28,7 @@ type FireTruck struct {
 	isConnecting   bool
 	visionRange    int
 	mu             sync.RWMutex
+	clock          *LamportClock
 }
 type object struct {
 	x    int
@@ -52,6 +53,7 @@ func CreateFiretruck(bus MessageBus, gridsize int, positionX int, positionY int,
 		fm:             fm,
 		isConnecting:   false,
 		visionRange:    5,
+		clock:          NewLamportClock(),
 	}
 }
 
@@ -80,6 +82,7 @@ func (ft *FireTruck) isFireNearby() (x, y int) {
 }
 
 func (ft *FireTruck) RequestWaterConnection() {
+	timestamp := ft.clock.Tick()
 	ft.mu.Lock()
 	if ft.hasWater || ft.isConnecting {
 		ft.mu.Unlock()
@@ -89,8 +92,10 @@ func (ft *FireTruck) RequestWaterConnection() {
 	ft.isConnecting = true
 	ft.mu.Unlock()
 
-	req := ConnectionRequest{TruckID: ft.id}
+	req := ConnectionRequest{TruckID: ft.id, Timestamp: timestamp}
 	data, _ := json.Marshal(req)
+
+	fmt.Printf("[Truck %d] REQUEST water at time %d\n", ft.id, timestamp)
 
 	// fmt.Printf("🚒 Truck %d requesting connection on %s...\n", ft.id, SubjectWaterConnect)
 
@@ -274,6 +279,8 @@ func (ft *FireTruck) vision(distance int) []object {
 
 func (ft *FireTruck) move(target helper.Object, state int) {
 
+	timestamp := ft.clock.Tick()
+
 	vecX := target.X - ft.positionX
 	vecY := target.Y - ft.positionY
 
@@ -308,6 +315,8 @@ func (ft *FireTruck) move(target helper.Object, state int) {
 
 	newX := ft.positionX + stepX
 	newY := ft.positionY + stepY
+
+	fmt.Printf("[Tuck %d] MOVE to (%d,%d) at time %d\n", ft.id, newX, newY, timestamp)
 
 	if ft.checkPos(newX, newY) {
 		ft.clearPos()
@@ -358,6 +367,11 @@ func (ft *FireTruck) guidedMove(target []object) {
 
 // move function for firetrucks not on job
 func (ft *FireTruck) freeMove(options []int) {
+
+	if len(options) == 0 {
+		ft.setPos(ft.positionX, ft.positionY)
+		return
+	}
 	// Clear current position
 	ft.clearPos()
 
