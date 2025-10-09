@@ -128,6 +128,10 @@ func (fm *FireManager) spawnFire(x, y int) bool {
 		return false
 	}
 
+	if (grid.Grid)[x][y].HasTruck {
+		return false
+	}
+
 	(grid.Grid)[x][y].HasFire = true
 	(grid.Grid)[x][y].Intensity = 1
 	fm.fireCount++
@@ -208,6 +212,10 @@ func (fm *FireManager) spreadFrom(x, y int) {
 		nx, ny := n[0], n[1]
 
 		if !fm.isValidCoordinate(nx, ny) {
+			continue
+		}
+
+		if (grid.Grid)[nx][ny].HasTruck { // If tile has fire truck, skip it
 			continue
 		}
 
