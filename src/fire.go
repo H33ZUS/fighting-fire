@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"fightingfire/grid"
-	"fmt"
 	"math/rand"
 	"time"
 )
@@ -242,13 +241,10 @@ func (fm *FireManager) getIntensity(x, y int) int {
 }
 
 func (fm *FireManager) ExtinguishFire(x, y int) {
-	timestamp := fm.clock.Tick()
 	// if there is no fire to extinguish (false function call)
 	if !fm.isValidCoordinate(x, y) || !(grid.Grid)[x][y].HasFire {
 		return
 	}
-
-	fmt.Printf("EXTINGUISH fire at (%d,%d) at time %d\n", x, y, timestamp)
 
 	(grid.Grid)[x][y].Intensity -= FireExtinguishRate
 

@@ -234,8 +234,10 @@ func (ft *FireTruck) update() {
 	defer grid.GridMutex.Unlock()
 
 	if workingStatus && fireDetected && hasWater {
+		timestamp := ft.clock.Tick()
 		ft.fm.ExtinguishFire(fireX, fireY)
 		// fmt.Printf("💦 Truck %d extinguishing fire at (%d, %d)\n", ft.id, fireX, fireY)
+		fmt.Printf("[Truck %d] EXTINGUISH fire at (%d,%d) TimeStamp: %d\n", ft.id, fireX, fireY, timestamp)
 	}
 
 	objects := ft.vision(ft.visionRange)
@@ -316,7 +318,7 @@ func (ft *FireTruck) move(target helper.Object, state int) {
 	newX := ft.positionX + stepX
 	newY := ft.positionY + stepY
 
-	fmt.Printf("[Tuck %d] MOVE to (%d,%d) at time %d\n", ft.id, newX, newY, timestamp)
+	fmt.Printf("[Tuck %d] MOVE to (%d,%d) TimeStamp: %d\n", ft.id, newX, newY, timestamp)
 
 	if ft.checkPos(newX, newY) {
 		ft.clearPos()
