@@ -3,6 +3,7 @@ package main
 import (
 	"container/heap"
 	"encoding/json"
+	"fmt"
 	"log"
 	"sync"
 	"time"
@@ -10,7 +11,7 @@ import (
 	"github.com/nats-io/nats.go"
 )
 
-const MaxVolume = 1000
+const MaxVolume = 500
 
 type PriorityQueue []*ConnectionRequest // for fairness
 
@@ -60,7 +61,7 @@ type WaterManager struct {
 
 func NewWaterManager(bus MessageBus) *WaterManager {
 	wm := &WaterManager{
-		volume:          1000,
+		volume:          500,
 		connections:     0,
 		refillRate:      50,
 		consumptionRate: 20,
@@ -131,7 +132,7 @@ func (wm *WaterManager) SetupNatsSubscriptions() {
 func (wm *WaterManager) ProcessQueue() {
 	for {
 		wm.mu.Lock()
-		req := wm.Dequeue()
+		req := wm.queue.Peek() // only look at request with highest priority, everyone else ignored until this is denied/granted
 
 		if req == nil {
 			wm.mu.Unlock()
@@ -142,20 +143,28 @@ func (wm *WaterManager) ProcessQueue() {
 		newConsumption := (wm.connections + 1) * wm.consumptionRate
 		canConnect := wm.volume >= newConsumption
 
+		var responseData []byte
+
 		if canConnect {
+			wm.Dequeue()
 			wm.connections++
-			// fmt.Printf("✅ Manager processed CONNECT for Truck %d. Active: %d (Volume: %d)\n", req.TruckID, wm.connections, wm.volume)
+
+			resp := WaterStatusResponse{TruckID: req.TruckID, Status: true}
+			responseData, _ = json.Marshal(resp) // connection granted
+			fmt.Printf("Truck %d granted\n", req.TruckID)
 		} else {
-			// fmt.Printf("❌ Manager DENIED CONNECT for Truck %d. Active: %d (Volume: %d - NO WATER)\n", req.TruckID, wm.connections, wm.volume)
+
+			fmt.Printf("Truck %d denied. Keeping position\n", req.TruckID)
+			wm.mu.Unlock()
+			time.Sleep(1 * time.Second)
+			continue // skip nats response
 		}
 
 		wm.mu.Unlock()
 
-		if req.Reply != "" {
-			resp := WaterStatusResponse{TruckID: req.TruckID, Status: canConnect}
-			data, _ := json.Marshal(resp)
+		if req.Reply != "" && responseData != nil {
 
-			wm.bus.Publish(req.Reply, data)
+			wm.bus.Publish(req.Reply, responseData)
 		}
 	}
 }
