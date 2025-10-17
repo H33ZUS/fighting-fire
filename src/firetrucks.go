@@ -15,6 +15,9 @@ import (
 
 var idCounter int = 1
 
+var dx = [...]int{0, 0, -1, 1}
+var dy = [...]int{-1, 1, 0, 0}
+
 type FireTruck struct {
 	id             int
 	bus            MessageBus
@@ -36,7 +39,7 @@ type object struct {
 	item int
 }
 
-const NatsRequestTimeout = 1 * time.Second
+const NatsRequestTimeout = 20 * time.Second
 
 func CreateFiretruck(bus MessageBus, gridsize int, positionX int, positionY int, updateInterval time.Duration, fm *FireManager) *FireTruck {
 	currentID := idCounter
@@ -132,7 +135,8 @@ func (ft *FireTruck) RequestWaterConnection() {
 }
 
 func (ft *FireTruck) DisconnectWaterRequest() {
-	req := ConnectionRequest{TruckID: ft.id}
+	timestamp := ft.clock.Tick()
+	req := ConnectionRequest{TruckID: ft.id, Timestamp: timestamp}
 	data, _ := json.Marshal(req)
 
 	// fmt.Printf("🚒 Truck %d requesting disconnection on %s...\n", ft.id, SubjectWaterDisconnect)
@@ -370,30 +374,39 @@ func (ft *FireTruck) guidedMove(target []object) {
 // move function for firetrucks not on job
 func (ft *FireTruck) freeMove(options []int) {
 
-	if len(options) == 0 {
-		ft.setPos(ft.positionX, ft.positionY)
-		return
-	}
 	// Clear current position
 	ft.clearPos()
 
 	// Random direction: up, down, left, right
-	dx := []int{0, 0, -1, 1}
-	dy := []int{-1, 1, 0, 0}
-	dir := rand.Intn(len(options))
+	moved := false
 
-	newX := ft.positionX + dx[options[dir]]
-	newY := ft.positionY + dy[options[dir]]
+	for len(options) > 0 {
+		dirIndex := rand.Intn(len(options))
+		chosenDir := options[dirIndex]
 
-	// Stay within bounds
-	if ft.checkPos(newX, newY) {
-		ft.positionX = newX
-		ft.positionY = newY
-	} else {
-		helper.RemoveDirection(options, dir)
-		ft.freeMove(options)
+		if chosenDir < 0 || chosenDir >= len(dx) {
+			options = helper.RemoveDirection(options, dirIndex)
+			continue
+		}
+
+		newX := ft.positionX + dx[chosenDir]
+		newY := ft.positionY + dy[chosenDir]
+
+		// Stay within bounds
+		if ft.checkPos(newX, newY) {
+			ft.positionX = newX
+			ft.positionY = newY
+			moved = true
+			break
+		} else {
+			options = helper.RemoveDirection(options, dirIndex)
+		}
 	}
 
 	// Set new position
 	ft.setPos(ft.positionX, ft.positionY)
+
+	if !moved && len(options) > 0 {
+		fmt.Printf("[Truck %d] Failed to move\n", ft.id)
+	}
 }
