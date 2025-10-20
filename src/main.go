@@ -43,7 +43,7 @@ func main() {
 	fireManager := NewFireManager(gridSize)
 	fireManager.Start(ctx) // starts spawn goroutine, fire spawns every 5 sec
 
-	for i := 0; i < 10; i++ {
+	for i := 0; i < 8; i++ {
 		x := rand.Intn(20)
 		y := rand.Intn(20)
 

@@ -7,10 +7,13 @@ import (
 	"fightingfire/grid"
 	"fightingfire/helper"
 	"fmt"
+	"log"
 	"math"
 	"math/rand"
 	"sync"
 	"time"
+
+	"github.com/nats-io/nats.go"
 )
 
 var idCounter int = 1
@@ -32,6 +35,7 @@ type FireTruck struct {
 	visionRange    int
 	mu             sync.RWMutex
 	clock          *LamportClock
+	knownFires     map[string]FireEvent
 }
 type object struct {
 	x    int
@@ -41,10 +45,14 @@ type object struct {
 
 const NatsRequestTimeout = 20 * time.Second
 
+func fireKey(x, y int) string {
+	return fmt.Sprintf("%d, %d", x, y)
+}
+
 func CreateFiretruck(bus MessageBus, gridsize int, positionX int, positionY int, updateInterval time.Duration, fm *FireManager) *FireTruck {
 	currentID := idCounter
 	idCounter++
-	return &FireTruck{
+	ft := &FireTruck{
 		id:             currentID,
 		bus:            bus,
 		gridsize:       gridsize,
@@ -57,6 +65,109 @@ func CreateFiretruck(bus MessageBus, gridsize int, positionX int, positionY int,
 		isConnecting:   false,
 		visionRange:    5,
 		clock:          NewLamportClock(),
+		knownFires:     make(map[string]FireEvent),
+	}
+	ft.SetupNatsSubscriptions()
+	return ft
+}
+
+func (ft *FireTruck) PublishNewFire(x, y int) {
+	event := FireEvent{
+		X:               x,
+		Y:               y,
+		Timestamp:       ft.clock.Tick(),
+		TruckID:         ft.id,
+		ClaimingTruckID: 0,
+	}
+
+	data, _ := json.Marshal(event)
+	fmt.Printf("[Truck %d] PUBLISHING NEW fire at (%d, %d)\n", ft.id, x, y)
+
+	if err := ft.bus.Publish(SubjectNewFires, data); err != nil {
+		fmt.Printf("Truck %d ERROR publishing new fire event: %v\n", ft.id, err)
+	}
+}
+
+func (ft *FireTruck) PublishExFire(x, y int) {
+	event := FireEvent{
+		X:               x,
+		Y:               y,
+		Timestamp:       ft.clock.Tick(),
+		TruckID:         ft.id,
+		ClaimingTruckID: ft.id,
+	}
+
+	data, _ := json.Marshal(event)
+	fmt.Printf("[Truck %d] PUBLISHING fire at (%d, %d) is EXTINGUISH\n", ft.id, x, y)
+
+	if err := ft.bus.Publish(SubjectExFires, data); err != nil {
+		fmt.Printf("Truck %d ERROR publishing ex fire event: %v\n", ft.id, err)
+	}
+}
+
+func (ft *FireTruck) PublishFireClaim(event FireEvent) {
+	ft.clock.Tick()
+	event.Timestamp = ft.clock.GetTime()
+
+	data, _ := json.Marshal(event)
+	fmt.Printf("[Truck %d] CLAIMING fire at (%d, %d) Timestamp: %d\n", ft.id, event.X, event.Y, event.Timestamp)
+
+	if err := ft.bus.Publish(SubjectClaimFire, data); err != nil {
+		fmt.Printf("Truck %d ERROR publishing fire claim event: %v\n", ft.id, err)
+	}
+}
+
+func (ft *FireTruck) FireUpdateHandler(msg *nats.Msg) {
+	var event FireEvent
+	if err := json.Unmarshal(msg.Data, &event); err != nil {
+		log.Printf("FT Error unmarshaling fire event from %s: %v", msg.Subject, err)
+		return
+	}
+
+	ft.mu.Lock()
+	defer ft.mu.Unlock()
+
+	key := fireKey(event.X, event.Y)
+	ft.clock.Update(event.Timestamp)
+
+	currentEvent, exists := ft.knownFires[key]
+
+	if !exists || event.Timestamp > currentEvent.Timestamp {
+		ft.knownFires[key] = event
+
+		if event.ClaimingTruckID != 0 && currentEvent.ClaimingTruckID == 0 {
+			fmt.Printf("[Truck %d] Fire (%d, %d) CLAIMED by Truck %d. Time: %d\n", ft.id, event.X, event.Y, event.ClaimingTruckID, event.Timestamp)
+		} else if msg.Subject == SubjectNewFires && !exists {
+			fmt.Printf("[Truck %d] Learned of NEW fire at (%d, %d). Time: %d\n", ft.id, event.X, event.Y, event.Timestamp)
+		}
+	}
+
+}
+
+func (ft *FireTruck) SetupNatsSubscriptions() {
+	if err := ft.bus.Subscribe(SubjectNewFires, ft.FireUpdateHandler); err != nil {
+		log.Fatalf("FATAL: [Truck %d] failed to subscribe to %s: %v", ft.id, SubjectNewFires, err)
+	}
+
+	if err := ft.bus.Subscribe(SubjectClaimFire, ft.FireUpdateHandler); err != nil {
+		log.Fatalf("FATAL: [Truck %d] failed to subscribe to %s: %v", ft.id, SubjectClaimFire, err)
+	}
+
+	if err := ft.bus.Subscribe(SubjectExFires, func(msg *nats.Msg) {
+		var event FireEvent
+		if err := json.Unmarshal(msg.Data, &event); err != nil {
+			log.Printf("FT Error unmarshaling SubjectExFires request: %v", err)
+			return
+		}
+
+		ft.mu.Lock()
+		delete(ft.knownFires, fireKey(event.X, event.Y))
+		ft.clock.Update(event.Timestamp)
+		ft.mu.Unlock()
+
+		fmt.Printf("[Truck %d] Learned fire at (%d, %d) is EXTINGUISHED. Fires: %d\n", ft.id, event.X, event.Y, len(ft.knownFires))
+	}); err != nil {
+		log.Fatalf("FATAL: [Truck %d] failed to subscribe to %s: %v", ft.id, SubjectExFires, err)
 	}
 }
 
@@ -65,6 +176,9 @@ func (ft *FireTruck) isFireNearby() (x, y int) {
 	// Acquire a read lock on the grid before reading its state
 	grid.GridMutex.RLock() // Assuming gridMutex is defined globally in main.go or similar
 	defer grid.GridMutex.RUnlock()
+
+	ft.mu.Lock()
+	defer ft.mu.Unlock()
 
 	// Define the 8 surrounding directions (including diagonals)
 	directions := []struct{ dx, dy int }{{0, 1}, {0, -1}, {1, 0}, {-1, 0}, {1, 1}, {1, -1}, {-1, 1}, {-1, -1}}
@@ -212,21 +326,19 @@ func (ft *FireTruck) checkPos(newX int, newY int) bool {
 }
 
 func (ft *FireTruck) update() {
+	objects := ft.vision(ft.visionRange)
+
 	ft.mu.RLock()
 	workingStatus := ft.isworking
 	hasWater := ft.hasWater
 	isConnecting := ft.isConnecting
+	fireDetectedGlobally := len(ft.knownFires) > 0
 	ft.mu.RUnlock()
 
-	// temporarily checks if a fire is nearby
-	fireX, fireY := ft.isFireNearby()
-	fireDetected := fireX != -2
-
-	if fireDetected && !workingStatus {
+	if fireDetectedGlobally && !workingStatus {
 		ft.mu.Lock()
 		ft.isworking = true
 		ft.mu.Unlock()
-
 		workingStatus = true
 	}
 
@@ -234,17 +346,26 @@ func (ft *FireTruck) update() {
 		go ft.RequestWaterConnection()
 	}
 
-	grid.GridMutex.Lock()
-	defer grid.GridMutex.Unlock()
+	fireX, fireY := ft.isFireNearby()
+	fireDetectedLocally := fireX != -2 // -2 out of bounds
 
-	if workingStatus && fireDetected && hasWater {
-		timestamp := ft.clock.Tick()
+	if workingStatus && fireDetectedLocally && hasWater {
+		grid.GridMutex.Lock()
+
 		ft.fm.ExtinguishFire(fireX, fireY)
-		// fmt.Printf("💦 Truck %d extinguishing fire at (%d, %d)\n", ft.id, fireX, fireY)
-		fmt.Printf("[Truck %d] EXTINGUISH fire at (%d,%d) TimeStamp: %d\n", ft.id, fireX, fireY, timestamp)
-	}
 
-	objects := ft.vision(ft.visionRange)
+		if (grid.Grid)[fireX][fireY].Intensity <= 0 {
+			(grid.Grid)[fireX][fireY].HasFire = false
+			grid.GridMutex.Unlock()
+
+			timestamp := ft.clock.Tick()
+			fmt.Printf("[Truck %d] EXTINGUISH fire at (%d,%d) TimeStamp: %d\n", ft.id, fireX, fireY, timestamp)
+
+			ft.PublishExFire(fireX, fireY)
+		} else {
+			grid.GridMutex.Unlock()
+		}
+	}
 
 	if len(objects) == 0 {
 		ft.freeMove([]int{0, 1, 2, 3})
@@ -252,7 +373,7 @@ func (ft *FireTruck) update() {
 		ft.guidedMove(objects)
 	}
 
-	if workingStatus && !fireDetected {
+	if workingStatus && !fireDetectedGlobally {
 		if hasWater {
 			go ft.DisconnectWaterRequest()
 		}
@@ -265,6 +386,12 @@ func (ft *FireTruck) update() {
 
 func (ft *FireTruck) vision(distance int) []object {
 
+	grid.GridMutex.RLock()
+	defer grid.GridMutex.RUnlock()
+
+	ft.mu.Lock()
+	defer ft.mu.Unlock()
+
 	var objects []object
 
 	for i := -distance; i <= distance; i++ {
@@ -274,6 +401,14 @@ func (ft *FireTruck) vision(distance int) []object {
 			if x >= 0 && x < 20 && y >= 0 && y < 20 && !(x == ft.positionX) && !(y == ft.positionY) {
 				if grid.Grid[x][y].HasFire {
 					objects = append(objects, object{x, y, 0})
+
+					key := fireKey(x, y)
+
+					if _, known := ft.knownFires[key]; !known {
+						ft.PublishNewFire(x, y)
+
+						ft.knownFires[key] = FireEvent{X: x, Y: y, Timestamp: ft.clock.GetTime(), TruckID: ft.id}
+					}
 				} else if grid.Grid[x][y].HasTruck {
 					objects = append(objects, object{x, y, 1})
 				}
@@ -341,32 +476,58 @@ func (ft *FireTruck) distance(x int, y int) int {
 
 func (ft *FireTruck) guidedMove(target []object) {
 
-	pqfires := &helper.ObjectHeap{}
-	heap.Init(pqfires)
+	ft.mu.RLock()
+
+	var bestFireTarget helper.Object
+	var fireToClaim *FireEvent
+	minDistance := math.MaxInt
+
+	for _, fireEvent := range ft.knownFires {
+		if fireEvent.ClaimingTruckID != 0 && fireEvent.ClaimingTruckID != ft.id {
+			continue
+		}
+
+		dist := ft.distance(fireEvent.X, fireEvent.Y)
+
+		if dist < minDistance {
+			minDistance = dist
+			bestFireTarget = helper.Object{X: fireEvent.X, Y: fireEvent.Y, Priority: dist}
+
+			if fireEvent.ClaimingTruckID == 0 {
+				fireToClaim = &fireEvent
+			} else {
+				fireToClaim = nil
+			}
+		}
+	}
+
+	ft.mu.RUnlock()
+
+	if minDistance != math.MaxInt {
+		if fireToClaim != nil {
+			claimEvent := *fireToClaim
+			claimEvent.ClaimingTruckID = ft.id
+			ft.PublishFireClaim(claimEvent)
+		}
+
+		ft.move(bestFireTarget, 0)
+		ft.setPos(ft.positionX, ft.positionY)
+		return
+	}
 
 	pqtrucks := &helper.ObjectHeap{}
 	heap.Init(pqtrucks)
 
-	for i := 0; i < len(target); i++ {
-		switch target[i].item {
-		case 0:
-			heap.Push(pqfires, helper.Object{X: target[i].x, Y: target[i].y, Priority: ft.distance(target[i].x, target[i].y)})
-		case 1:
-			heap.Push(pqtrucks, helper.Object{X: target[i].x, Y: target[i].y, Priority: ft.distance(target[i].x, target[i].y)})
+	for _, obj := range target {
+		if obj.item == 1 {
+			heap.Push(pqtrucks, helper.Object{X: obj.x, Y: obj.y, Priority: ft.distance(obj.x, obj.y)})
 		}
 	}
 
-	if pqfires.Len() > 0 {
-		m := heap.Pop(pqfires).(helper.Object)
-
-		ft.move(m, 0)
-
-		ft.setPos(ft.positionX, ft.positionY)
-	} else {
+	if pqtrucks.Len() > 0 {
 		m := heap.Pop(pqtrucks).(helper.Object)
 
 		ft.move(m, 1)
-		// Set new position
 		ft.setPos(ft.positionX, ft.positionY)
 	}
 }
