@@ -61,10 +61,10 @@ type WaterManager struct {
 
 func NewWaterManager(bus MessageBus) *WaterManager {
 	wm := &WaterManager{
-		volume:          500,
+		volume:          800,
 		connections:     0,
-		refillRate:      50,
-		consumptionRate: 20,
+		refillRate:      60,
+		consumptionRate: 15,
 		bus:             bus,
 		clock:           NewLamportClock(),
 	}
